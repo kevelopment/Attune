@@ -1,0 +1,11 @@
+[tools]
+go = "1.26.9"
+node = "22.22.1"
+
+[tasks.up]
+description = "Start Attune with frontend hot reload and Go rebuilds"
+run = "./scripts/dev-up.sh"
+
+[tasks.down]
+description = "Stop the managed development app and frontend"
+run = "./scripts/dev-down.sh"

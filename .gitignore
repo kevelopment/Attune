@@ -21,3 +21,4 @@ third_party/kindling/*/kindling-cli.exe
 *.azw3
 *.kfx
 *.pdf
+build/darwin/Info.dev.plist

@@ -63,6 +63,8 @@ Windows and Linux runtime validation is still limited. macOS downloads are local
 
 Attune uses **Go · Wails v2 · React · TypeScript · SQLite**. It uses the operating system's webview rather than shipping a separate browser engine. [Kindling](https://github.com/ciscoriordan/kindling) provides standalone EPUB-to-MOBI conversion.
 
+For development, use `mise run up` to start the native app with React/CSS hot reload and Go rebuilds; `mise run down` stops it. The development library is isolated from your normal library. See [development setup](docs/development.md) for prerequisites.
+
 For a local macOS build:
 
 ```sh

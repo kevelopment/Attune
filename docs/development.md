@@ -2,14 +2,14 @@
 
 ## macOS setup
 
-Use macOS 13+, Go 1.25+, Node.js 22 with npm, and the Xcode command-line tools. Install the native prerequisites described in the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation).
+Use macOS 13+, mise, and the Xcode command-line tools. Install the native prerequisites from the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation). Mise selects Go 1.26.9 and Node.js 22.22.1. Run `mise trust` once if mise asks to trust `mise.toml`.
 
 ```sh
-./scripts/fetch-kindling.sh
-./scripts/dev.sh
+mise run up
+mise run down
 ```
 
-The helper download is pinned by version and SHA-256. Go/npm tooling and caches default to the checkout's ignored `.cache/` directory; the standard `GOPATH`, `GOMODCACHE`, `GOCACHE`, `GOBIN`, and `npm_config_cache` overrides are respected.
+`up` starts Vite and the native Wails app on the host. React and CSS changes hot-reload through Vite on port 5183; Go changes rebuild and restart the app. The Wails development server listens on port 34115. The app stores its persistent, isolated SQLite library in `.cache/dev-library`, separate from your normal Attune library. The pinned Kindling helper is fetched and checksum-verified on first start. Logs are in `.cache/dev/wails.log` (`tail -f .cache/dev/wails.log`). `down` preserves the development library and dependencies. Choose another frontend port with `ATTUNE_DEV_PORT=5184 mise run up`, or a library location with `ATTUNE_DEV_LIBRARY_HOME=/path/to/dev-library mise run up`. `./scripts/dev.sh` is an alias for `mise run up`.
 
 ## Checks
 
@@ -36,7 +36,7 @@ npm ci
 npm run dev
 ```
 
-Open the displayed local address with `?preview=1`. Preview mode uses fictional books and generated SVG covers. It cannot access the native library or write to an actual device. It is never enabled by default in the desktop app.
+This optional host-only browser preview uses fictional books and generated SVG covers. Open the displayed local address with `?preview=1`. It cannot access the native library or write to an actual device. It is never enabled by default in the desktop app.
 
 The README screenshots are captured from this preview, not from someone's personal library. See [screenshot notes](images/README.md).
 
