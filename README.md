@@ -77,7 +77,7 @@ See [development](docs/development.md) for prerequisites, tests, browser preview
 
 ## Where things stand
 
-Attune is an early project. The library, metadata editor, book preview, and macOS USB transfer flow are implemented. A full reader with annotations and reading progress, PDF import, and additional device families are future work. DRM removal is outside the project's scope.
+Attune is an early project. The library, metadata editor, book preview, and macOS USB transfer flow are implemented. A full reader with annotations and reading progress, PDF import, and additional device families are future work.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
