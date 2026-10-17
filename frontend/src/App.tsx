@@ -8,7 +8,7 @@ import {
 import { bridge, progressFromEvent } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
 
-type Page = 'library' | 'recent' | 'device' | 'settings'
+type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
 type Confirmation = { title: string; description: string; confirmLabel: string; action: () => void }
 type EditDraft = { title: string; authors: string; publisher: string; language: string; published: string; subjects: string; series: string; seriesIndex: string; description: string }
@@ -283,7 +283,8 @@ export default function App() {
     const width = 220
     setActiveMenu({ key, left: Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width)), top: Math.max(8, Math.min(window.innerHeight - 190, rect.bottom + 6)) })
   }
-  const detailsOpen = !!(focusedBook || focusedDeviceBook)
+  const detailsVisible = page !== 'settings' && page !== 'updates'
+  const detailsOpen = detailsVisible && !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
   return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
@@ -293,6 +294,7 @@ export default function App() {
         <button className={`rail-item ${page === 'device' ? 'active' : ''}`} title={device?.name ?? 'Add a Kindle'} aria-label={device?.name ?? 'Add a Kindle'} aria-current={page === 'device' ? 'page' : undefined} onClick={() => device ? navigateTo('device') : void addDevice()}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
       </nav>
       <div className="rail-spacer"/>
+      <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} title="Updates" aria-label="Updates" aria-current={page === 'updates' ? 'page' : undefined} onClick={() => navigateTo('updates')}><RefreshCw/></button>
       <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigateTo('settings')}><Settings2/></button>
     </aside>
 
@@ -302,14 +304,14 @@ export default function App() {
         <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
       </div>
       <div className="top-actions">
-        {page !== 'settings' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ F</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
+        {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ F</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
         {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
-        {page !== 'settings' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy}><Plus size={17}/><span>Import books</span></button>}
+        {page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy}><Plus size={17}/><span>Import books</span></button>}
       </div>
     </header>
 
     <main className="main-panel">
-      {page === 'settings' ? <Settings state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())}/> : <>
+      {page === 'settings' ? <Settings state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())}/> : page === 'updates' ? <Updates/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
@@ -340,8 +342,8 @@ export default function App() {
         </div>
       </>}
     </main>
-    {focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)}/></div>}
-    {focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
+    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)}/></div>}
+    {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
     {previewTarget && <BookPreviewDialog book={bookPreview?.book ?? previewTarget} preview={bookPreview} loading={previewLoading} error={previewError} chapterIndex={previewChapter} setChapterIndex={setPreviewChapter} onClose={() => { setPreviewTarget(null); setBookPreview(null) }}/>}
     {progress && <TransferToast progress={progress} onCancel={() => void run(() => bridge.cancelTransfer(), () => setProgress(p => p ? { ...p, message: 'Cancellation requested…' } : p))} onClose={() => setProgress(null)}/>}
     {importProgress && <ImportStatus progress={importProgress} onClose={() => setImportProgress(null)}/>}
@@ -574,6 +576,10 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
 }
 function Settings({ state, onOpenFolder }: { state: AppState | null; onOpenFolder: () => void }) {
   return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><h1>Settings</h1><p>A few details about your library.</p></div></div><div className="settings-card"><div><strong>Library location</strong><span>{state?.libraryPath || 'Unavailable'}</span></div><button className="toolbar-button" onClick={onOpenFolder}><FolderOpen size={16}/> Open folder</button></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><div className="settings-note"><CircleHelp size={16}/><span>Attune keeps your book files on this Mac. No cloud account is used.</span></div></section>
+}
+
+function Updates() {
+  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><RefreshCw size={22}/></div><div><h1>Updates</h1><p>Keep Attune up to date.</p></div></div><div className="settings-card updates-card"><div><strong>Software updates</strong><span>Updates will be available with the first published release.</span></div><button className="toolbar-button" disabled><RefreshCw size={16}/> Check for updates</button></div></section>
 }
 function stageName(stage: string) { return ({ queued: 'Waiting in queue', converting: 'Converting for Kindle', transferring: 'Copying to device', done: 'Saved to Kindle', cancelled: 'Transfer cancelled', error: 'Check your device and try again' } as Record<string, string>)[stage] ?? 'Preparing transfer' }
 function message(e: unknown) { return e instanceof Error ? e.message : String(e || 'Something went wrong. Try again.') }
