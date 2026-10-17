@@ -53,3 +53,5 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 .search-box input:focus,.search-box input:focus-visible{outline:none;box-shadow:none}
 
 .updates-card>div span{max-width:100%;white-space:normal;line-height:1.5}
+
+.rail-updates{color:var(--subtle)}.rail-updates svg{width:16px;height:16px;stroke-width:1.6}

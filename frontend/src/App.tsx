@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   BookOpen, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
-  CircleHelp, FolderOpen, Upload, CheckCircle2, LoaderCircle, PanelRightClose,
+  CircleHelp, FolderOpen, Upload, Download, CheckCircle2, LoaderCircle, PanelRightClose,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
@@ -294,7 +294,7 @@ export default function App() {
         <button className={`rail-item ${page === 'device' ? 'active' : ''}`} title={device?.name ?? 'Add a Kindle'} aria-label={device?.name ?? 'Add a Kindle'} aria-current={page === 'device' ? 'page' : undefined} onClick={() => device ? navigateTo('device') : void addDevice()}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
       </nav>
       <div className="rail-spacer"/>
-      <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} title="Updates" aria-label="Updates" aria-current={page === 'updates' ? 'page' : undefined} onClick={() => navigateTo('updates')}><RefreshCw/></button>
+      {state?.updateAvailable === true && <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} title="Update available" aria-label="Update available" aria-current={page === 'updates' ? 'page' : undefined} onClick={() => navigateTo('updates')}><Download/></button>}
       <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigateTo('settings')}><Settings2/></button>
     </aside>
 

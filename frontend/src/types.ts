@@ -28,7 +28,7 @@ export type BookPreview = { book: Book; chapters: PreviewChapter[] }
 export type Progress = { id: string; bookID: string; title: string; stage: string; message: string; current: number; total: number }
 export type ImportResult = { imported: number; duplicates: number; errors: string[] }
 export type ImportProgress = { current: number; total: number; filename: string; imported: number; duplicates: number; failed: number; stage: 'importing' | 'done' | 'error'; message?: string }
-export type AppState = { books: Book[]; devices: Device[]; converterReady: boolean; converterVersion: string; libraryPath: string }
+export type AppState = { books: Book[]; devices: Device[]; converterReady: boolean; converterVersion: string; libraryPath: string; updateAvailable?: boolean }
 
 declare global {
   interface Window {
