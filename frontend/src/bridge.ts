@@ -97,6 +97,12 @@ export const bridge = {
     previewState.devices = previewState.devices.filter(device => device.id !== id)
   },
   async openLibraryFolder(): Promise<void> { if (!isPreview) return api('OpenLibraryFolder') },
+  async changeLibraryLocation(): Promise<string> {
+    if (!isPreview) return api('ChangeLibraryLocation')
+    await new Promise(resolve => window.setTimeout(resolve, 600))
+    previewState.libraryPath = '~/Documents/Attune Library'
+    return previewState.libraryPath
+  },
   on(event: string, cb: (...args: any[]) => void) {
     if (isPreview) {
       if (event === 'transfer:progress') listeners.push(cb)

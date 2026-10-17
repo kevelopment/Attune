@@ -224,6 +224,97 @@ func extrasFromEPUB(m epub.Metadata) bookExtras {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// CopyTo creates a standalone library copy in an existing empty directory.
+// Imported books are retained; the regenerable conversion cache is omitted.
+func (s *Store) CopyTo(destination string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(destination)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return errors.New("library copy destination is not empty")
+	}
+	dbPath := filepath.Join(destination, "library.sqlite")
+	if _, err = s.db.Exec(`VACUUM INTO ?`, dbPath); err != nil {
+		return err
+	}
+	copyDB, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	if err != nil {
+		return err
+	}
+	_, err = copyDB.Exec(`DELETE FROM conversions`)
+	closeErr := copyDB.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	booksRoot := filepath.Join(s.root, "books")
+	if _, err = os.Lstat(booksRoot); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return copyManagedTree(booksRoot, filepath.Join(destination, "books"))
+}
+
+func copyManagedTree(source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			if entry.Type()&os.ModeSymlink != 0 || !entry.IsDir() {
+				return errors.New("invalid managed books directory")
+			}
+			return os.Mkdir(destination, 0o700)
+		}
+		target := filepath.Join(destination, rel)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errors.New("managed books contain a symbolic link")
+		}
+		if entry.IsDir() {
+			return os.Mkdir(target, 0o700)
+		}
+		if !entry.Type().IsRegular() {
+			return errors.New("managed books contain a non-regular file")
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			_ = in.Close()
+			return err
+		}
+		_, copyErr := io.Copy(out, in)
+		inErr := in.Close()
+		outErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if inErr != nil {
+			return inErr
+		}
+		if outErr != nil {
+			return outErr
+		}
+		return os.Chtimes(target, info.ModTime(), info.ModTime())
+	})
+}
+
 func (s *Store) ListBooks() ([]model.Book, error) {
 	rows, err := s.db.Query(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision FROM books ORDER BY added_at DESC`)
 	if err != nil {

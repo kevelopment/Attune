@@ -56,7 +56,9 @@ The README screenshots are captured from this preview, not from someone's person
 
 ## Local data
 
-For compatibility with the first prototype, macOS data remains in `~/Library/Application Support/Ebook Library`. The product rename does not move or rewrite it. Use **Settings → Open library folder** to find the current path. Quit Attune before backing up this entire directory.
+The default macOS library is `~/Library/Application Support/Ebook Library`, preserving data from the first prototype. Use **Settings → Library location → Change…** to select a parent folder. Attune copies books and metadata into its `Attune Library` subfolder, switches to that copy, and remembers the location across restarts. The previous folder is retained for recovery; conversion caches are regenerated as needed. The destination must be new or empty, and transfers must finish before changing it. Use **Open folder** to find the active library. Quit Attune before backing up its entire directory.
+
+The selected path is stored separately in the system configuration directory under `Attune/settings.json`. Development runs keep this preference in `<EBOOK_LIBRARY_HOME>.settings.json`, preserving isolation from the normal library. If a configured library is unavailable, startup reports an error rather than creating an empty replacement.
 
 For an isolated desktop test, set `EBOOK_LIBRARY_HOME` to a temporary directory before launching the executable. `EBOOK_LIBRARY_CONVERTER` can override the helper path. These original override names remain supported.
 

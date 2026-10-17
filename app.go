@@ -32,6 +32,7 @@ type App struct {
 	manager          deviceManager
 	converter        converterRunner
 	root             string
+	configPath       string
 	initErr          error
 	converterVersion string
 	converterErr     error
@@ -63,8 +64,15 @@ func NewApp() *App { return &App{selected: make(map[string]model.Device)} }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.emit = func(event string, data ...interface{}) { wruntime.EventsEmit(ctx, event, data...) }
-	root := os.Getenv("EBOOK_LIBRARY_HOME")
-	if root == "" {
+	envRoot := os.Getenv("EBOOK_LIBRARY_HOME")
+	root := envRoot
+	configPath, err := librarySettingsPath(envRoot)
+	if err != nil {
+		a.initErr = err
+		return
+	}
+	a.configPath = configPath
+	if envRoot == "" {
 		base, err := os.UserConfigDir()
 		if err != nil {
 			a.initErr = err
@@ -73,6 +81,19 @@ func (a *App) startup(ctx context.Context) {
 		// Keep the original data folder so existing Ebook Library users retain
 		// their managed books and conversion cache after the Attune rename.
 		root = filepath.Join(base, "Ebook Library")
+	}
+	if configured, found, err := loadLibraryLocation(configPath); err != nil {
+		a.initErr = err
+		return
+	} else if found {
+		root = configured
+		if st, err := os.Stat(filepath.Join(root, "library.sqlite")); err != nil || !st.Mode().IsRegular() {
+			if err == nil {
+				err = errors.New("library database is not a regular file")
+			}
+			a.initErr = fmt.Errorf("configured library is unavailable: %w", err)
+			return
+		}
 	}
 	a.root = root
 	a.store, a.initErr = library.Open(root)
@@ -111,6 +132,8 @@ func converterPath() string {
 }
 
 func (a *App) ready() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.initErr != nil {
 		return fmt.Errorf("open library: %w", a.initErr)
 	}
@@ -134,6 +157,8 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	a.mu.Unlock()
 	a.jobs.Wait()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.store != nil {
 		_ = a.store.Close()
 	}
@@ -745,7 +770,24 @@ func (a *App) OpenLibraryFolder() error {
 	} else if goruntime.GOOS == "windows" {
 		tool = "explorer"
 	}
-	return exec.Command(tool, a.root).Run()
+	a.mu.Lock()
+	root := a.root
+	a.mu.Unlock()
+	return exec.Command(tool, root).Run()
+}
+
+// ChangeLibraryLocation asks for a parent folder and moves a validated copy of
+// the current library into its Attune Library subfolder.
+func (a *App) ChangeLibraryLocation() (string, error) {
+	if err := a.ready(); err != nil {
+		return "", err
+	}
+	parent, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose where to store your library"})
+	if err != nil || parent == "" {
+		return "", err
+	}
+	destination := filepath.Join(parent, "Attune Library")
+	return a.relocateLibrary(destination)
 }
 
 func (a *App) covers(w http.ResponseWriter, r *http.Request) {

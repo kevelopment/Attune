@@ -43,6 +43,7 @@ export default function App() {
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
   const [toast, setToast] = useState<{ text: string; kind?: 'error' } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [changingLibrary, setChangingLibrary] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editDraft, setEditDraft] = useState<EditDraft>({ title: '', authors: '', publisher: '', language: '', published: '', subjects: '', series: '', seriesIndex: '', description: '' })
@@ -51,6 +52,7 @@ export default function App() {
   const importGuard = useRef(false)
   const transferGuard = useRef(false)
   const refreshGuard = useRef(false)
+  const libraryChangeGuard = useRef(false)
   const busyRef = useRef(false)
   const importPathsRef = useRef<(paths: string[]) => void>(() => {})
   const deviceRefreshRef = useRef<() => void>(() => {})
@@ -222,6 +224,29 @@ export default function App() {
     else await performImport(() => bridge.importBooks())
   }
   async function addDevice() { await run(() => bridge.selectDevice(), async () => { await refresh(); navigateTo('device') }) }
+  async function changeLibraryLocation() {
+    if (libraryChangeGuard.current || busy || importGuard.current || transferActive) return
+    libraryChangeGuard.current = true
+    setChangingLibrary(true)
+    try {
+      await run(() => bridge.changeLibraryLocation(), async (newRoot: string) => {
+        if (!newRoot) return
+        setFocusedBook(null)
+        setFocusedDeviceBook(null)
+        setSelected([])
+        setDeviceSelection([])
+        setEditing(false)
+        setActiveMenu(null)
+        setPreviewTarget(null)
+        setBookPreview(null)
+        await refresh(true)
+        setToast({ text: 'Library location updated. The original copy is still in its previous folder.' })
+      })
+    } finally {
+      libraryChangeGuard.current = false
+      setChangingLibrary(false)
+    }
+  }
   async function startEdit(book: Book) {
     setFocusedDeviceBook(null)
     setFocusedBook(book)
@@ -311,7 +336,7 @@ export default function App() {
     </header>
 
     <main className="main-panel">
-      {page === 'settings' ? <Settings state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())}/> : page === 'updates' ? <Updates/> : <>
+      {page === 'settings' ? <Settings state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
@@ -574,8 +599,9 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
     </section>
   </div>
 }
-function Settings({ state, onOpenFolder }: { state: AppState | null; onOpenFolder: () => void }) {
-  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><h1>Settings</h1><p>A few details about your library.</p></div></div><div className="settings-card"><div><strong>Library location</strong><span>{state?.libraryPath || 'Unavailable'}</span></div><button className="toolbar-button" onClick={onOpenFolder}><FolderOpen size={16}/> Open folder</button></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><div className="settings-note"><CircleHelp size={16}/><span>Attune keeps your book files on this Mac. No cloud account is used.</span></div></section>
+function Settings({ state, onOpenFolder, onChangeLocation, changingLibrary, controlsDisabled }: { state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
+  const location = state?.libraryPath || 'Unavailable'
+  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><h1>Settings</h1><p>A few details about your library.</p></div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
 }
 
 function Updates() {

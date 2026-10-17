@@ -55,3 +55,6 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 .updates-card>div span{max-width:100%;white-space:normal;line-height:1.5}
 
 .rail-updates{color:var(--subtle)}.rail-updates svg{width:16px;height:16px;stroke-width:1.6}
+
+.settings-card>.settings-actions{display:flex;align-items:center;gap:8px;flex:none}.settings-card .settings-actions button{white-space:nowrap}.settings-card>div>span[title]{overflow-wrap:anywhere}
+@media(max-width:680px){.settings-card{align-items:flex-start;flex-direction:column;gap:12px}.settings-actions{flex-wrap:wrap}}
