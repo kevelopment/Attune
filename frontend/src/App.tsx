@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  BookOpen, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp,
+  BookOpen, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
-  CircleHelp, FolderOpen, ChevronRight, Upload, CheckCircle2, LoaderCircle, PanelRightClose,
+  CircleHelp, FolderOpen, Upload, CheckCircle2, LoaderCircle, PanelRightClose,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
@@ -17,7 +17,8 @@ const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null)
-  const [page, setPage] = useState<Page>('library')
+  const [navigation, setNavigation] = useState<{ pages: Page[]; index: number }>({ pages: ['library'], index: 0 })
+  const page = navigation.pages[navigation.index]
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<Sort>('recent')
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
@@ -55,6 +56,14 @@ export default function App() {
   const deviceRefreshRef = useRef<() => void>(() => {})
   const deviceBooksOwner = useRef<string | null>(null)
   busyRef.current = busy
+
+  function navigateTo(nextPage: Page) {
+    setNavigation(current => {
+      if (current.pages[current.index] === nextPage) return current
+      const pages = [...current.pages.slice(0, current.index + 1), nextPage]
+      return { pages, index: pages.length - 1 }
+    })
+  }
 
   const refresh = useCallback(async (force = false) => {
     if (refreshGuard.current || (importGuard.current && !force)) return
@@ -212,7 +221,7 @@ export default function App() {
     if (bridge.preview) await performImport(() => bridge.previewImport(), 18, 'Preparing sample EPUBs…')
     else await performImport(() => bridge.importBooks())
   }
-  async function addDevice() { await run(() => bridge.selectDevice(), async () => { await refresh(); setPage('device') }) }
+  async function addDevice() { await run(() => bridge.selectDevice(), async () => { await refresh(); navigateTo('device') }) }
   async function startEdit(book: Book) {
     setFocusedDeviceBook(null)
     setFocusedBook(book)
@@ -279,16 +288,19 @@ export default function App() {
   return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
       <nav className="rail-nav" aria-label="Library sections">
-        <button className={`rail-item ${page === 'library' ? 'active' : ''}`} title="All books" aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => setPage('library')}><BookOpen/></button>
-        <button className={`rail-item ${page === 'recent' ? 'active' : ''}`} title="Recently added" aria-label="Recently added" aria-current={page === 'recent' ? 'page' : undefined} onClick={() => setPage('recent')}><Clock3/></button>
-        <button className={`rail-item ${page === 'device' ? 'active' : ''}`} title={device?.name ?? 'Add a Kindle'} aria-label={device?.name ?? 'Add a Kindle'} aria-current={page === 'device' ? 'page' : undefined} onClick={() => device ? setPage('device') : void addDevice()}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
+        <button className={`rail-item ${page === 'library' ? 'active' : ''}`} title="All books" aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><BookOpen/></button>
+        <button className={`rail-item ${page === 'recent' ? 'active' : ''}`} title="Recently added" aria-label="Recently added" aria-current={page === 'recent' ? 'page' : undefined} onClick={() => navigateTo('recent')}><Clock3/></button>
+        <button className={`rail-item ${page === 'device' ? 'active' : ''}`} title={device?.name ?? 'Add a Kindle'} aria-label={device?.name ?? 'Add a Kindle'} aria-current={page === 'device' ? 'page' : undefined} onClick={() => device ? navigateTo('device') : void addDevice()}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
       </nav>
       <div className="rail-spacer"/>
-      <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}><Settings2/></button>
+      <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigateTo('settings')}><Settings2/></button>
     </aside>
 
     <header className="topbar">
-      <div className="breadcrumb"><span>{page === 'device' ? 'Devices' : page === 'settings' ? 'Preferences' : 'Library'}</span><ChevronRight size={14}/><strong>{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? device?.name ?? 'Kindle' : 'Settings'}</strong></div>
+      <div className="topbar-navigation" aria-label="Navigation history">
+        <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
+        <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
+      </div>
       <div className="top-actions">
         {page !== 'settings' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ F</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
         {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
@@ -312,7 +324,7 @@ export default function App() {
               <FilterSelect label="Language" value={languageFilter} values={metadata.languages.values} hasUnknown={metadata.languages.missing} onChange={setLanguageFilter}/>
               {(authorFilter || genreFilter || languageFilter) && <button className="clear-filters" onClick={() => { setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}>Clear</button>}
             </div>
-            {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button" onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}<button className="toolbar-button" onClick={() => setPage('library')}><Send size={16}/><span>Add from library</span></button></> : <>
+            {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button" onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}<button className="toolbar-button" onClick={() => navigateTo('library')}><Send size={16}/><span>Add from library</span></button></> : <>
               {selected.length > 0 && <button className="toolbar-button danger-button" onClick={() => void deleteSelected()}><Trash2 size={16}/><span>Remove ({selected.length})</span></button>}
               {selected.length > 0 && device && <button className="toolbar-button" onClick={() => void send(selected)} disabled={transferActive}><Send size={16}/><span>Send to Kindle <em>{selected.length}</em></span></button>}
               <label className="sort-select"><ArrowDownUp size={15}/><select aria-label="Sort books" value={sort} onChange={e => setSort(e.target.value as Sort)}><option value="recent">{isDevice ? 'Device order' : 'Recently added'}</option><option value="title">Title</option><option value="author">Author</option></select></label>
