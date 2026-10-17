@@ -1,3 +1,5 @@
+<img src="frontend/public/attune.svg" width="80" height="80" alt="Attune bonfire icon">
+
 # Attune
 
 Attune your library.
