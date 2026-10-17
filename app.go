@@ -90,13 +90,24 @@ func converterPath() string {
 	if p := os.Getenv("EBOOK_LIBRARY_CONVERTER"); p != "" {
 		return p
 	}
+	name := "kindling-cli"
+	if goruntime.GOOS == "windows" {
+		name += ".exe"
+	}
 	if exe, err := os.Executable(); err == nil {
-		p := filepath.Clean(filepath.Join(filepath.Dir(exe), "..", "Resources", "kindling-cli"))
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
+		dir := filepath.Dir(exe)
+		if goruntime.GOOS == "darwin" {
+			resource := filepath.Clean(filepath.Join(dir, "..", "Resources", name))
+			if st, err := os.Stat(resource); err == nil && !st.IsDir() {
+				return resource
+			}
+		}
+		adjacent := filepath.Join(dir, name)
+		if st, err := os.Stat(adjacent); err == nil && !st.IsDir() {
+			return adjacent
 		}
 	}
-	return filepath.Join("third_party", "kindling", goruntime.GOOS+"-"+goruntime.GOARCH, "kindling-cli")
+	return filepath.Join("third_party", "kindling", goruntime.GOOS+"-"+goruntime.GOARCH, name)
 }
 
 func (a *App) ready() error {
@@ -346,6 +357,9 @@ func (a *App) DeleteBook(id string) error {
 }
 
 func (a *App) SelectDevice() (model.Device, error) {
+	if goruntime.GOOS != "darwin" {
+		return model.Device{}, fmt.Errorf("Kindle USB support is available on macOS only: %w", errors.ErrUnsupported)
+	}
 	if err := a.ready(); err != nil {
 		return model.Device{}, err
 	}
@@ -725,7 +739,13 @@ func (a *App) OpenLibraryFolder() error {
 	if err := a.ready(); err != nil {
 		return err
 	}
-	return exec.Command("/usr/bin/open", a.root).Run()
+	tool := "xdg-open"
+	if goruntime.GOOS == "darwin" {
+		tool = "open"
+	} else if goruntime.GOOS == "windows" {
+		tool = "explorer"
+	}
+	return exec.Command(tool, a.root).Run()
 }
 
 func (a *App) covers(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - name: Validate release tag
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH (for example v1.2.3)." >&2
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+          echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-arm64
+            runner: macos-15
+            goos: darwin
+            goarch: arm64
+          - id: macos-amd64
+            runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - id: linux-amd64
+            runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - id: windows-amd64
+            runner: windows-2025
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend assets
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - name: Install Linux desktop dependencies
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Windows C compiler
+        if: matrix.goos == 'windows'
+        id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Add Windows C compiler to PATH
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $mingw = Join-Path $env:MSYS2_LOCATION 'ucrt64/bin'
+          if (!(Test-Path (Join-Path $mingw 'gcc.exe'))) { throw "MinGW GCC was not found at $mingw" }
+          Add-Content $env:GITHUB_PATH $mingw
+
+      - name: Fetch pinned Kindling helper
+        if: matrix.goos != 'windows'
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: scripts/fetch-kindling.sh "$TARGET_GOOS" "$TARGET_GOARCH"
+
+      - name: Fetch pinned Kindling helper (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: ./scripts/fetch-kindling.ps1 $env:TARGET_GOOS $env:TARGET_GOARCH
+
+      - name: Build and package (macOS/Linux)
+        if: matrix.goos != 'windows'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          CGO_ENABLED: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            scripts/build-release.sh "$VERSION" webkit2_41
+          else
+            scripts/build-release.sh "$VERSION"
+          fi
+
+      - name: Build and package (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/build-release.ps1 -Version $env:VERSION
+
+      - name: Test and vet Go packages
+        if: matrix.goos == 'linux'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race -tags webkit2_41 ./...
+          go vet -tags webkit2_41 ./...
+
+      - name: Test and vet Go packages
+        if: matrix.goos == 'darwin'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race ./...
+          go vet ./...
+
+      - name: Test and vet Go packages
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race ./...
+          if ($LASTEXITCODE -ne 0) { throw "Go tests failed with exit code $LASTEXITCODE" }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw "go vet failed with exit code $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: package-${{ matrix.id }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [validate, build]
+    if: github.event_name == 'push' && needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Generate checksums and install notes
+        working-directory: dist
+        run: |
+          sha256sum Attune-* > SHA256SUMS.txt
+          cat > INSTALL.txt <<'EOF'
+          Attune release packages
+
+          macOS: open the .app from the archive. Packages are ad-hoc signed and are not notarized.
+          Linux amd64: experimental, library features only; GTK 3 and WebKit2GTK 4.1 runtime libraries are required.
+          Windows amd64: experimental, library features only; Microsoft Edge WebView2 Runtime is required.
+          Kindle USB discovery, transfer, and eject are currently supported only on macOS.
+          Verify downloads with SHA256SUMS.txt.
+          EOF
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          printf 'Attune %s\n\nSee INSTALL.txt for platform requirements and support notes.\n' "$RELEASE_TAG" > dist/release-notes.txt
+          gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
+            --verify-tag --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt

@@ -109,10 +109,30 @@ export const bridge = {
     if (!url.startsWith('preview:')) return url
     const i = Number(url.split(':')[1]) || 0
     const title = sampleTitles[i] ?? 'A Good Book'
-    const parts = title.split(' ')
-    const display = parts.length > 3 ? `${parts.slice(0, 2).join(' ')}\n${parts.slice(2).join(' ')}` : title
     const color = coverColors[i % coverColors.length]
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="620" viewBox="0 0 420 620"><rect width="420" height="620" fill="${color}"/><rect x="17" y="17" width="386" height="586" fill="none" stroke="#ffffff55"/><text x="210" y="290" fill="#fff" text-anchor="middle" font-family="Georgia" font-size="38" font-weight="bold">${display.split('\n').map((s, n) => `<tspan x="210" dy="${n ? 48 : 0}">${s}</tspan>`).join('')}</text><text x="210" y="545" fill="#ffffffcc" text-anchor="middle" font-family="sans-serif" font-size="15" letter-spacing="4">${(sampleAuthors[i % sampleAuthors.length]).toUpperCase()}</text></svg>`
+    const fontSize = 36
+    const maxWidth = 340
+    const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]!)
+    const wrap = (value: string) => {
+      const lines: string[] = []
+      let line = ''
+      for (const word of value.split(/\s+/)) {
+        const candidate = line ? `${line} ${word}` : word
+        if (line && candidate.length * fontSize * 0.55 > maxWidth) { lines.push(line); line = word }
+        else line = candidate
+      }
+      if (line) lines.push(line)
+      return lines
+    }
+    const lines = wrap(title)
+    const titleY = 320 - (lines.length - 1) * 22
+    const titleMarkup = lines.map((line, n) => `<tspan x="210" dy="${n ? 44 : 0}" textLength="${Math.min(maxWidth, line.length * fontSize * 0.55)}" lengthAdjust="spacingAndGlyphs">${escape(line)}</tspan>`).join('')
+    const artwork = i % 3 === 0
+      ? `<circle cx="210" cy="166" r="66" fill="none" stroke="#ffffff42" stroke-width="1.5"/><circle cx="210" cy="166" r="51" fill="none" stroke="#ffffff2b"/><path d="M210 88v156M132 166h156" stroke="#ffffff35"/>`
+      : i % 3 === 1
+        ? `<path d="M70 142c40-48 85-48 125 0s85 48 155 0M70 166c40-48 85-48 125 0s85 48 155 0M70 190c40-48 85-48 125 0s85 48 155 0" fill="none" stroke="#ffffff38" stroke-width="1.5"/>`
+        : `<path d="M128 240V164a82 82 0 0 1 164 0v76M150 240v-76a60 60 0 0 1 120 0v76" fill="none" stroke="#ffffff42" stroke-width="1.5"/><circle cx="210" cy="159" r="15" fill="#ffffff28"/>`
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="620" viewBox="0 0 420 620"><rect width="420" height="620" fill="${color}"/><rect x="17" y="17" width="386" height="586" fill="none" stroke="#ffffff55"/><text x="210" y="${titleY}" fill="#fff" text-anchor="middle" font-family="Georgia" font-size="${fontSize}" font-weight="bold">${titleMarkup}</text><g>${artwork}</g><text x="210" y="545" fill="#ffffffcc" text-anchor="middle" font-family="sans-serif" font-size="14" letter-spacing="3">${escape(sampleAuthors[i % sampleAuthors.length].toUpperCase())}</text></svg>`
     return `data:image/svg+xml,${encodeURIComponent(svg)}`
   },
 }

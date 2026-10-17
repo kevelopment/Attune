@@ -1,55 +1,88 @@
-<img src="frontend/public/attune.svg" width="80" height="80" alt="Attune bonfire icon">
+<p align="center">
+  <img src="frontend/public/attune.svg" width="104" height="104" alt="Attune bonfire icon">
+</p>
 
-# Attune
+<h1 align="center">Attune</h1>
+<p align="center"><strong>Attune your library.</strong><br>A quiet home for your ebooks, and a companion for your reader.</p>
 
-Attune your library.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-e8e4dc?style=flat-square&labelColor=292a2d"></a>
+  <img alt="Local first" src="https://img.shields.io/badge/local-first-e8e4dc?style=flat-square&labelColor=292a2d">
+  <a href="https://wails.io"><img alt="Built with Wails" src="https://img.shields.io/badge/built_with-Wails-e8e4dc?style=flat-square&labelColor=292a2d"></a>
+</p>
 
-A local macOS EPUB library with automatic legacy MOBI conversion for original Kindle 1 and 2 devices. Built with Go, Wails v2, React, TypeScript, and SQLite. Kindling is bundled as a standalone conversion helper; Calibre is not required.
+<p align="center">
+  <a href="#download">Download</a> ·
+  <a href="#a-little-less-library-admin">Features</a> ·
+  <a href="docs/development.md">Build from source</a> ·
+  <a href="docs/releasing.md">Release guide</a>
+</p>
 
-## Run the local app
+<p align="center">
+  <img src="docs/images/library-details.png" width="100%" alt="Attune library with illustrated fictional book covers and a separate book details panel">
+  <br><sub>Staged preview with fictional books, authors, and original cover artwork. No personal library data.</sub>
+</p>
 
-Build on macOS 13 or newer with Go, Node.js/npm, and the Xcode command line tools installed:
+## A little less library admin
+
+Keep your EPUBs together, tidy their details, and send a few good books to your reader. Attune manages the library locally and handles Kindle conversion with a bundled helper—no Calibre installation or cloud account required.
+
+| Make room for your books | Take a closer look |
+| --- | --- |
+| Import DRM-free EPUBs by dropping files or using the picker. Follow batch progress and skip exact duplicates. | Browse a cover grid or compact list. Search, sort, and filter by author, genre, or language. |
+| Correct titles, authors, publisher, dates, genres, series, and descriptions in a resizable details panel. | Preview chapters, local book styling, and images in a centered reading page. |
+| Keep original EPUBs intact in an app-managed library. | Choose book actions from the three-dot menu or select several books at once. |
+
+### A small pause before the next chapter
+
+<p align="center">
+  <img src="docs/images/book-preview.png" width="100%" alt="Attune's chapter preview with a charcoal surround and a rounded white portrait page">
+</p>
+
+The preview is a quick way to check a book's contents and language before sending it. Scripts and remote content are blocked. It is not a simulation of a particular e-reader.
+
+### A companion for your reader
+
+On macOS, connect a mounted USB Kindle to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
+
+The initial device target is **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Device support and operating-system support are separate: Windows and Linux builds currently offer the library and preview; USB management is macOS-only.
+
+## Download
+
+Open this repository's **Releases** page and choose the archive for your operating system and CPU. Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
+
+| Platform | Status | Package |
+| --- | --- | --- |
+| macOS 13+ | Primary platform; library and USB Kindle management | App bundle in a ZIP archive |
+| Windows | Experimental; library and preview | ZIP archive |
+| Linux | Experimental; library and preview | Compressed application archive |
+
+Windows and Linux runtime validation is still limited. macOS downloads are locally signed, not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for packaging, system requirements, and signing status.
+
+## Build from source
+
+Attune uses **Go · Wails v2 · React · TypeScript · SQLite**. It uses the operating system's webview rather than shipping a separate browser engine. [Kindling](https://github.com/ciscoriordan/kindling) provides standalone EPUB-to-MOBI conversion.
+
+For a local macOS build:
 
 ```sh
 ./scripts/fetch-kindling.sh
 ./scripts/build.sh
-open "build/bin/Attune.app"
+open build/bin/Attune.app
 ```
 
-The first helper download is pinned and checksum verified. The resulting app includes the helper and its license; end users do not install Kindling or Rust. The current helper download targets Apple Silicon. Intel packaging requires a separately pinned Intel helper and verification on Intel hardware.
+See [development](docs/development.md) for prerequisites, tests, browser preview, and the project layout. See [releasing](docs/releasing.md) for the tag-driven build and publication workflow.
 
-For development, use `./scripts/dev.sh`. For a browser-only interface preview, run `npm ci && npm run dev` inside `frontend`, then open the displayed address with `?preview=1`. Preview data is simulated and never enabled by default in the desktop app. `frontend/design.html` is the initial layout sketch.
+## Where things stand
 
-## Use
+Attune is an early project. The library, metadata editor, book preview, and macOS USB transfer flow are implemented. A full reader with annotations and reading progress, cloud sync, PDF import, and additional device families are future work. DRM removal is outside the project's scope.
 
-1. Import DRM-free EPUB books using **Import books** or drag them into the window. A status panel shows batch progress, the current filename, and imported, duplicate, and failed counts. Originals are copied into the managed library; source files stay untouched.
-2. Browse, search, sort, or switch between grid and list. Author, genre, and language filters are shared between Library and Kindle views; genre uses embedded subject metadata, with Unknown for missing fields. Select a book to open a separate details panel; library books support **Read preview** and editing title, authors, publisher, language, publication date, genres, series, and description. Each book’s three-dot menu offers preview, editing, device transfer, and removal; removing a book still requires confirmation.
-3. Connect the Kindle using a data-capable USB cable. Select it in the sidebar, or choose its mounted volume manually. Books in nested folders are included. Device gallery/list views use locally extracted metadata and cover thumbnails when available; filenames and neutral covers remain as fallbacks. Hidden metadata files and `.sdr` companion folders are excluded.
-4. Select library books and choose **Send to Kindle**. The app converts, copies, verifies, and records each transfer. Repeated unchanged sends skip existing verified copies.
-5. Eject the Kindle before unplugging it. Removing a device book and removing a local library book are separate actions with confirmations.
+Metadata edits are stored in the library without changing the original EPUB. Generated Kindle files currently receive title and author overrides; other edited fields remain library metadata.
 
-The four-icon rail and global search/import toolbar share the native macOS translucent backdrop and system appearance. Details occupy their own rounded panel beside the library, keeping book entries visible; drag its divider to resize it. The library-folder shortcut lives in Settings. Details show available embedded publisher, publication date, identifiers, series, genres, description, sort metadata, and explicit page counts, alongside file size and timestamps. Missing fields are omitted. Metadata edits are saved in the library without changing the original EPUB; generated Kindle files currently receive title and author overrides.
+## Contributing
 
-Attune keeps `~/Library/Application Support/Ebook Library` as its data folder for compatibility with existing installations. Existing books remain in place; Attune does not move or rewrite the library during the product rename. Quit the app before copying this entire directory for a backup. Converted files are disposable caches; they can be regenerated from the originals. Use **Settings → Open library folder** to locate the data.
+Bug reports, small fixes, and device compatibility reports are welcome. For larger changes, describe the problem and proposed behavior in an issue first. Keep changes focused and run the [local checks](docs/development.md#checks).
 
-## Verify
+## License & acknowledgements
 
-```sh
-./scripts/test.sh
-```
-
-The test suite covers EPUB validation/import, SQLite persistence and duplicates, metadata revisioning, conversion/cache behavior, safe filesystem transfers, and cancellation. Tests use temporary directories rather than connected hardware. A real Kindle is still required to validate its renderer, navigation, and USB compatibility.
-
-For isolated desktop testing, set `EBOOK_LIBRARY_HOME` to a temporary directory before launching the app executable. `EBOOK_LIBRARY_CONVERTER` can override the helper path for development. These existing override names remain supported; production defaults to the helper inside the app bundle. Build tools and Go/npm caches default to this checkout's ignored `.cache/` directory, and can be overridden with the standard `GOPATH`, `GOMODCACHE`, `GOCACHE`, `GOBIN`, and `npm_config_cache` variables.
-
-## Release scope
-
-The first version targets original Kindle 1 and 2 through mounted USB storage and legacy MOBI exports. EPUB remains the canonical library format. The app lists existing Kindle ebook files, including MOBI, PRC, and AZW; it does not convert them back to EPUB or synchronize annotations, clippings, reading progress, or collections. A sandboxed EPUB preview shows chapters, local styles/images, and declared language from managed originals. It blocks scripts and remote content; it does not simulate Kindle rendering or decrypt device books. A full reader with progress/annotations, cloud services, PDF import, and DRM removal are outside this release.
-
-Transfers verify the selected volume's identity and copied bytes. They use an exclusive atomic rename when the filesystem supports it, or an exclusive verified copy on filesystems that do not. Both paths refuse to overwrite existing device files.
-
-Local builds use an ad-hoc signature. Public distribution needs a Developer ID identity, signing of the app and helper, and Apple notarization. Credentials are not included in this project. The third-party helper version, checksum, source, and license are recorded in `third_party/kindling` and the fetch script. The helper executable is fetched locally and is ignored by Git; the pinned checksum and upstream MIT license are retained separately.
-
-## License
-
-Attune is available under the MIT License in `LICENSE`. The Kindling helper is a separate third-party work under its own MIT license in `third_party/kindling/LICENSE`.
+[MIT](LICENSE), with separate [third-party notices](THIRD_PARTY_NOTICES.md). Thanks to [Wails](https://wails.io), [Kindling](https://github.com/ciscoriordan/kindling), and the open-source ebook community. The name is a small nod to resting and preparing for the next journey at a bonfire.

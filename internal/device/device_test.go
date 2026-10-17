@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"attune/internal/model"
-	"golang.org/x/sys/unix"
 )
 
 func testManager(root string, id string, free uint64) *Manager {
@@ -153,7 +152,8 @@ func TestRemovePreservesAnnotationsAndRejectsSymlink(t *testing.T) {
 	os.WriteFile(filepath.Join(docs, "book.mobi"), []byte("ebook"), 0600)
 	os.WriteFile(filepath.Join(docs, "older.prc"), []byte("prc"), 0600)
 	os.WriteFile(filepath.Join(docs, "My Clippings.txt"), []byte("annotations"), 0600)
-	os.Symlink("book.mobi", filepath.Join(docs, "linked.epub"))
+	fileLink := filepath.Join(docs, "linked.epub")
+	fileLinkErr := os.Symlink("book.mobi", fileLink)
 	m := testManager(root, "usb-1", 100)
 	os.MkdirAll(filepath.Join(docs, "Author", "Book"), 0755)
 	os.WriteFile(filepath.Join(docs, "Author", "Book", "nested.prc"), []byte("nested"), 0600)
@@ -192,8 +192,10 @@ func TestRemovePreservesAnnotationsAndRejectsSymlink(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(docs, "My Clippings.txt")); err != nil {
 		t.Fatal("annotations removed", err)
 	}
-	if err := m.Remove(selected(root, "usb-1"), "documents/linked.epub"); err == nil {
-		t.Fatal("symlink removed")
+	if fileLinkErr == nil {
+		if err := m.Remove(selected(root, "usb-1"), "documents/linked.epub"); err == nil {
+			t.Fatal("symlink removed")
+		}
 	}
 	if err := m.Remove(selected(root, "usb-1"), "documents/My Clippings.txt"); err == nil {
 		t.Fatal("annotation file removed")
@@ -201,11 +203,10 @@ func TestRemovePreservesAnnotationsAndRejectsSymlink(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(docs, "safe"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(docs, "safe"), filepath.Join(docs, "linked-dir")); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Remove(selected(root, "usb-1"), "documents/linked-dir/book.mobi"); err == nil {
-		t.Fatal("path through symlink directory accepted")
+	if err := os.Symlink(filepath.Join(docs, "safe"), filepath.Join(docs, "linked-dir")); err == nil {
+		if err := m.Remove(selected(root, "usb-1"), "documents/linked-dir/book.mobi"); err == nil {
+			t.Fatal("path through symlink directory accepted")
+		}
 	}
 	// Replacing the volume after path validation must prevent deletion.
 	if err := os.WriteFile(filepath.Join(docs, "Author", "Book", "keep.mobi"), []byte("keep"), 0600); err != nil {
@@ -242,7 +243,7 @@ func TestCommitTransferFallsBackWhenFilesystemLacksExclusiveRename(t *testing.T)
 	if err := os.WriteFile(temp, []byte("verified ebook"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	unsupported := func() error { return unix.ENOTSUP }
+	unsupported := func() error { return errors.ErrUnsupported }
 	expected, err := hashFile(temp)
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +262,7 @@ func TestCommitTransferFallsBackWhenFilesystemLacksExclusiveRename(t *testing.T)
 		if e := os.WriteFile(target, []byte("created during commit"), 0600); e != nil {
 			return e
 		}
-		return unix.ENOTSUP
+		return errors.ErrUnsupported
 	}
 	if err := commitTransferWith(context.Background(), temp, target, expected, concurrent); !os.IsExist(err) {
 		t.Fatalf("concurrent target should be preserved, got %v", err)

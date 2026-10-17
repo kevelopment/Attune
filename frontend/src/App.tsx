@@ -276,7 +276,7 @@ export default function App() {
   }
   const detailsOpen = !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
-  return <div className={`app-shell ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
+  return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
       <nav className="rail-nav" aria-label="Library sections">
         <button className={`rail-item ${page === 'library' ? 'active' : ''}`} title="All books" aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => setPage('library')}><BookOpen/></button>

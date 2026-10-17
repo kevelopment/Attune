@@ -4,9 +4,12 @@ frontend/wailsjs/
 frontend/*.tsbuildinfo
 frontend/package.json.md5
 build/bin/
+build/release/
+dist/
 evidence/
 .DS_Store
 third_party/kindling/*/kindling-cli
+third_party/kindling/*/kindling-cli.exe
 .cache/
 *.sqlite
 *.sqlite-shm

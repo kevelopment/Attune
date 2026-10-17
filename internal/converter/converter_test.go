@@ -5,12 +5,71 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func init() {
+	if os.Getenv("ATTUNE_CONVERTER_HELPER") == "" {
+		return
+	}
+	mode := os.Getenv("ATTUNE_CONVERTER_HELPER")
+	switch mode {
+	case "fake":
+		if len(os.Args) > 1 && os.Args[1] == "--version" {
+			fmt.Fprintln(os.Stdout, "kindling test")
+			os.Exit(0)
+		}
+		log, err := os.OpenFile(os.Getenv("ATTUNE_CONVERTER_ARGS"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(2)
+		}
+		for _, arg := range os.Args[1:] {
+			fmt.Fprintln(log, arg)
+		}
+		log.Close()
+		for i := 1; i+1 < len(os.Args); i++ {
+			if os.Args[i] == "-o" {
+				if err := copyFile(os.Getenv("ATTUNE_CONVERTER_FIXTURE"), os.Args[i+1]); err != nil {
+					os.Exit(3)
+				}
+				os.Exit(0)
+			}
+		}
+		os.Exit(4)
+	case "slow":
+		time.Sleep(5 * time.Second)
+		os.Exit(0)
+	case "noisy":
+		_, _ = io.CopyN(os.Stdout, strings.NewReader(strings.Repeat("1234567890", 110000)), 1<<30)
+		os.Exit(0)
+	default:
+		os.Exit(5)
+	}
+}
+
+func copyFile(source, destination string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(destination)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
 
 func writeEPUB(t *testing.T, path, version string) {
 	t.Helper()
@@ -89,13 +148,18 @@ func TestRunnerPassesLegacyAndMetadataArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	argsLog := filepath.Join(dir, "args.txt")
-	bin := filepath.Join(dir, "kindling-fake")
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'kindling test'; exit 0; fi\nprintf '%%s\\n' \"$@\" >> %q\nout=\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then shift; out=$1; fi; shift; done\ncp %q \"$out\"\n", argsLog, fixture)
-	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+	bin, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
+	withHelper := func(mode string) *Runner {
+		t.Setenv("ATTUNE_CONVERTER_HELPER", mode)
+		t.Setenv("ATTUNE_CONVERTER_ARGS", argsLog)
+		t.Setenv("ATTUNE_CONVERTER_FIXTURE", fixture)
+		return New(bin)
+	}
 	output := filepath.Join(dir, "converted.mobi")
-	if err := New(bin).Convert(context.Background(), source, output, "Edited Title", []string{"Author One", "Author Two"}); err != nil {
+	if err := withHelper("fake").Convert(context.Background(), source, output, "Edited Title", []string{"Author One", "Author Two"}); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsLog)
@@ -110,28 +174,31 @@ func TestRunnerPassesLegacyAndMetadataArguments(t *testing.T) {
 }
 
 func TestRunnerHonorsCancellationAndOutputLimit(t *testing.T) {
-	dir := t.TempDir()
-	slow := filepath.Join(dir, "slow")
-	if err := os.WriteFile(slow, []byte("#!/bin/sh\nsleep 5\n"), 0700); err != nil {
+	bin, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
+	}
+	makeRunner := func(mode string) *Runner {
+		t.Setenv("ATTUNE_CONVERTER_HELPER", mode)
+		return New(bin)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	if _, err := New(slow).Version(ctx); err == nil || !strings.Contains(err.Error(), "cancelled or timed out") {
+	if _, err := makeRunner("slow").Version(ctx); err == nil || !strings.Contains(err.Error(), "cancelled or timed out") {
 		t.Fatalf("expected cancellation error, got %v", err)
 	}
-	noisy := filepath.Join(dir, "noisy")
-	if err := os.WriteFile(noisy, []byte("#!/bin/sh\ni=0\nwhile [ $i -lt 110000 ]; do printf 1234567890; i=$((i+1)); done\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	got, err := New(noisy).Version(context.Background())
+	got, err := makeRunner("noisy").Version(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "exceeded 1 MiB") {
 		t.Fatalf("expected bounded-output error, got %v (version output bytes %d)", err, len(got))
 	}
 }
 
 func TestBundledKindlingConvertsEPUB2AndEPUB3(t *testing.T) {
-	binaryPath := filepath.Join("..", "..", "third_party", "kindling", "darwin-arm64", "kindling-cli")
+	name := "kindling-cli"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binaryPath := filepath.Join("..", "..", "third_party", "kindling", runtime.GOOS+"-"+runtime.GOARCH, name)
 	if _, e := os.Stat(binaryPath); e != nil {
 		t.Skip("bundled Kindling binary unavailable")
 	}

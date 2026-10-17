@@ -15,11 +15,9 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"attune/internal/model"
-	"golang.org/x/sys/unix"
 )
 
 const maxCommandOutput = 1 << 20
@@ -285,13 +283,13 @@ func (m *Manager) Send(ctx context.Context, expected model.Device, source, filen
 
 func commitTransfer(ctx context.Context, temp, target, expectedHash string) error {
 	return commitTransferWith(ctx, temp, target, expectedHash, func() error {
-		return unix.RenamexNp(temp, target, unix.RENAME_EXCL)
+		return exclusiveRename(temp, target)
 	})
 }
 
 func commitTransferWith(ctx context.Context, temp, target, expectedHash string, exclusiveRename func() error) error {
 	err := exclusiveRename()
-	if err == nil || (!errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP)) {
+	if err == nil || !errors.Is(err, errors.ErrUnsupported) {
 		return err
 	}
 	// Some removable FAT drivers lack RENAME_EXCL. Open the final name
@@ -555,14 +553,6 @@ func hashFile(p string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
-func volumeSpace(root string) (uint64, uint64, error) {
-	var s syscall.Statfs_t
-	if e := syscall.Statfs(root, &s); e != nil {
-		return 0, 0, e
-	}
-	return s.Bavail * uint64(s.Bsize), s.Blocks * uint64(s.Bsize), nil
-}
-
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -577,46 +567,6 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 	return out, nil
 }
 
-// mountedVolumes gets candidate mount points from /Volumes then asks diskutil
-// for authoritative USB/removable metadata; arbitrary directories never qualify.
-func mountedVolumes() ([]volume, error) {
-	if runtime.GOOS != "darwin" {
-		return nil, errors.New("device discovery is supported on macOS only")
-	}
-	entries, err := os.ReadDir("/Volumes")
-	if err != nil {
-		return nil, err
-	}
-	out := []volume{}
-	for _, e := range entries {
-		root := filepath.Join("/Volumes", e.Name())
-		if !isDirNoSymlink(root) {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		b, err := exec.CommandContext(ctx, "diskutil", "info", "-plist", root).Output()
-		cancel()
-		if err != nil || len(b) > maxCommandOutput {
-			continue
-		}
-		meta := readPlistStrings(b)
-		if meta["MountPoint"] == "" || filepath.Clean(meta["MountPoint"]) != filepath.Clean(root) {
-			continue
-		}
-		internal := strings.EqualFold(meta["Internal"], "true")
-		bus := strings.ToLower(meta["BusProtocol"] + " " + meta["Protocol"])
-		external := !internal && (strings.Contains(bus, "usb") || strings.Contains(bus, "sd") || strings.Contains(bus, "external"))
-		if !external {
-			continue
-		}
-		id := meta["VolumeUUID"]
-		if id == "" {
-			id = meta["DeviceIdentifier"]
-		}
-		out = append(out, volume{Root: root, ID: id, Name: first(meta["VolumeName"], meta["MediaName"], e.Name()), External: true})
-	}
-	return out, nil
-}
 func first(xs ...string) string {
 	for _, x := range xs {
 		if x != "" {
