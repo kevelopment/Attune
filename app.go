@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"attune/internal/converter"
@@ -27,22 +28,28 @@ import (
 )
 
 type App struct {
-	ctx              context.Context
-	store            *library.Store
-	manager          deviceManager
-	converter        converterRunner
-	root             string
-	configPath       string
-	initErr          error
-	converterVersion string
-	converterErr     error
-	mu               sync.Mutex
-	selected         map[string]model.Device
-	busy             bool
-	closing          bool
-	cancel           context.CancelFunc
-	jobs             sync.WaitGroup
-	emit             func(string, ...interface{})
+	ctx                context.Context
+	store              *library.Store
+	manager            deviceManager
+	converter          converterRunner
+	root               string
+	configPath         string
+	initErr            error
+	converterVersion   string
+	converterErr       error
+	mu                 sync.Mutex
+	selected           map[string]model.Device
+	busy               bool
+	closing            bool
+	cancel             context.CancelFunc
+	jobs               sync.WaitGroup
+	emit               func(string, ...interface{})
+	updateMu           sync.Mutex
+	updateState        UpdateState
+	updateLastProgress time.Time
+	updateScheduled    bool
+	updateCancel       context.CancelFunc
+	activeOps          atomic.Int32
 }
 
 type deviceManager interface {
@@ -59,7 +66,13 @@ type converterRunner interface {
 	Convert(context.Context, string, string, string, []string) error
 }
 
-func NewApp() *App { return &App{selected: make(map[string]model.Device)} }
+func NewApp() *App {
+	state := UpdateState{CurrentVersion: appVersion, Status: "idle"}
+	if isDesktopBinary() {
+		state = loadUpdateState()
+	}
+	return &App{selected: make(map[string]model.Device), updateState: state}
+}
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
@@ -155,13 +168,19 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.cancel != nil {
 		a.cancel()
 	}
+	if a.updateCancel != nil {
+		a.updateCancel()
+		a.updateCancel = nil
+	}
 	a.mu.Unlock()
 	a.jobs.Wait()
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.store != nil {
 		_ = a.store.Close()
+		a.store = nil
 	}
+	a.mu.Unlock()
+	a.applyUpdateOnQuit()
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
@@ -266,6 +285,8 @@ func (a *App) ImportPaths(paths []string) (model.ImportResult, error) {
 		emitEarlyError()
 		return result, errors.New("wait for the transfer to finish before importing")
 	}
+	a.activeOps.Add(1)
+	defer a.activeOps.Add(-1)
 	if len(paths) > 500 {
 		emitEarlyError()
 		return result, errors.New("import up to 500 books at a time")
@@ -393,13 +414,17 @@ func (a *App) DeleteBook(id string) error {
 }
 
 func (a *App) SelectDevice() (model.Device, error) {
-	if goruntime.GOOS != "darwin" {
-		return model.Device{}, fmt.Errorf("Kindle USB support is available on macOS only: %w", errors.ErrUnsupported)
-	}
 	if err := a.ready(); err != nil {
 		return model.Device{}, err
 	}
-	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose the mounted Kindle volume", DefaultDirectory: "/Volumes"})
+	defaultDirectory := "/media"
+	switch goruntime.GOOS {
+	case "darwin":
+		defaultDirectory = "/Volumes"
+	case "windows":
+		defaultDirectory = `C:\`
+	}
+	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose the mounted Kindle volume", DefaultDirectory: defaultDirectory})
 	if err != nil {
 		return model.Device{}, err
 	}

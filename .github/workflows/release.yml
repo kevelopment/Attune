@@ -72,15 +72,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
       - name: Build frontend assets
         run: |
@@ -130,7 +122,7 @@ jobs:
       - name: Build and package (macOS/Linux)
         if: matrix.goos != 'windows'
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
+          VERSION: ${{ needs.validate.outputs.publish == 'true' && needs.validate.outputs.artifact_version || needs.validate.outputs.version }}
           CGO_ENABLED: "1"
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -143,35 +135,14 @@ jobs:
         if: matrix.goos == 'windows'
         shell: pwsh
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
+          VERSION: ${{ needs.validate.outputs.publish == 'true' && needs.validate.outputs.artifact_version || needs.validate.outputs.version }}
         run: ./scripts/build-release.ps1 -Version $env:VERSION
 
-      - name: Test and vet Go packages
-        if: matrix.goos == 'linux'
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          go test -race -tags webkit2_41 ./...
-          go vet -tags webkit2_41 ./...
+      - name: Lint
+        run: mise run lint
 
-      - name: Test and vet Go packages
-        if: matrix.goos == 'darwin'
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          go test -race ./...
-          go vet ./...
-
-      - name: Test and vet Go packages
-        if: matrix.goos == 'windows'
-        shell: pwsh
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          go test -race ./...
-          if ($LASTEXITCODE -ne 0) { throw "Go tests failed with exit code $LASTEXITCODE" }
-          go vet ./...
-          if ($LASTEXITCODE -ne 0) { throw "go vet failed with exit code $LASTEXITCODE" }
+      - name: Test
+        run: mise run test
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -210,9 +181,9 @@ jobs:
           Attune release packages
 
           macOS: open the .app from the archive. Packages are ad-hoc signed and are not notarized.
-          Linux amd64: experimental, library features only; GTK 3 and WebKit2GTK 4.1 runtime libraries are required.
-          Windows amd64: experimental, library features only; Microsoft Edge WebView2 Runtime is required.
-          Kindle USB discovery, transfer, and eject are currently supported only on macOS.
+          Linux amd64: experimental; GTK 3 and WebKit2GTK 4.1 runtime libraries are required. USB management needs lsblk, udisksctl, and working UDisks/polkit permissions.
+          Windows amd64: experimental; Microsoft Edge WebView2 Runtime and PowerShell Storage CIM cmdlets are required. USB management requires a USB/removable volume with a drive letter and stable IDs.
+          Experimental Kindle USB discovery, transfer, and eject are implemented on macOS, Linux, and Windows; physical-device support still needs validation on each platform.
           Verify downloads with SHA256SUMS.txt.
           EOF
       - name: Publish release

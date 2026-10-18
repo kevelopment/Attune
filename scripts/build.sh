@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 . "$(dirname "$0")/env.sh"
+ATTUNE_VERSION=${ATTUNE_VERSION:-$(node -p 'require("./frontend/package.json").version')}
+node -e 'if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)(\.(0|[1-9][0-9]*))?)?$/.test(process.argv[1])) process.exit(2)' "$ATTUNE_VERSION" || {
+  echo "ATTUNE_VERSION must be MAJOR.MINOR.PATCH with an optional alpha, beta, or rc suffix" >&2
+  exit 2
+}
 ARCH=$(go env GOARCH)
 if [ "$(go env GOOS)" != darwin ]; then
   echo "The first desktop build targets macOS." >&2
@@ -13,7 +18,7 @@ fi
 if [ ! -x "$GOBIN/wails" ]; then
   go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 fi
-wails build -clean
+wails build -clean -ldflags "-X main.appVersion=$ATTUNE_VERSION -X main.updateEnabled=true"
 APP="build/bin/Attune.app"
 mkdir -p "$APP/Contents/Resources/licenses"
 cp "third_party/kindling/darwin-$ARCH/kindling-cli" "$APP/Contents/Resources/kindling-cli"

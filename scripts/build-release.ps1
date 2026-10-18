@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Version)
 $ErrorActionPreference = "Stop"
-if ($Version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw "Version must be numeric MAJOR.MINOR.PATCH: $Version" }
+if ($Version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(alpha|beta|rc)(\.(0|[1-9]\d*))?)?$') { throw "Version must be MAJOR.MINOR.PATCH with an optional alpha, beta, or rc suffix: $Version" }
+$ProductVersion = ($Version -split '-', 2)[0]
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $root
 $env:GOPATH = if ($env:GOPATH) { $env:GOPATH } else { Join-Path $root ".cache/go" }
@@ -19,9 +20,9 @@ $configPath = Join-Path $root "wails.json"
 $backup = Get-Content -Raw $configPath
 try {
   $config = $backup | ConvertFrom-Json
-  $config.info.productVersion = $Version
+  $config.info.productVersion = $ProductVersion
   $config | ConvertTo-Json -Depth 32 | Set-Content -Encoding utf8 $configPath
-  & (Join-Path $env:GOBIN "wails.exe") build -clean -platform windows/amd64
+  & (Join-Path $env:GOBIN "wails.exe") build -clean -platform windows/amd64 -ldflags "-X main.appVersion=$Version -X main.updateEnabled=true"
   if ($LASTEXITCODE -ne 0) { throw "Wails build failed with exit code $LASTEXITCODE" }
   $stage = Join-Path $root "build/release/Attune-windows-amd64"
   $dist = Join-Path $root "dist"
@@ -34,10 +35,11 @@ try {
   Copy-Item (Join-Path $root "third_party/kindling/THIRD_PARTY_LICENSES.txt") (Join-Path $stage "licenses/Kindling-THIRD_PARTY_LICENSES.txt")
   Copy-Item (Join-Path $root "third_party/kindling/LICENSE") (Join-Path $stage "licenses/Kindling-LICENSE.txt")
   @"
-Attune Windows amd64 (experimental; library features only)
+Attune Windows amd64 (experimental)
 
 Run Attune.exe. Microsoft Edge WebView2 Runtime is required.
-Kindle USB discovery, transfer, and eject are available only in the macOS build.
+USB Kindle discovery, transfer, and eject are experimental and use PowerShell Storage cmdlets. A removable volume with a drive letter and stable IDs is required.
+Physical-device validation is limited; check that the Kindle appears as a mounted drive before transferring.
 "@ | Set-Content -Encoding utf8 (Join-Path $stage "INSTALL.txt")
   Compress-Archive -Path "$stage/*" -DestinationPath (Join-Path $dist "Attune-windows-amd64.zip") -Force
 } finally {

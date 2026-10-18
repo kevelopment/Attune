@@ -128,6 +128,8 @@ func (a *App) relocateLibrary(destination string) (string, error) {
 	if a.busy {
 		return "", errors.New("wait for the transfer to finish before moving the library")
 	}
+	a.activeOps.Add(1)
+	defer a.activeOps.Add(-1)
 	if a.configPath == "" {
 		return "", errors.New("library settings path is unavailable")
 	}

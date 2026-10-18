@@ -11,10 +11,12 @@ import { useTextSize, type TextSize } from './appearance'
 import ActivityCenter, { useActivityLog } from './ActivityCenter'
 import type { ActivityEntry } from './ActivityCenter'
 import { InlineBanner, useNotifications } from './Notifications'
+import Updates, { useUpdater, UpdateSettingsCard } from './Updates'
+import type { UpdateState } from './types'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
-type Confirmation = { title: string; description: string; confirmLabel: string; action: () => void }
+type Confirmation = { title: string; description: string; confirmLabel: string; cancelLabel?: string; danger?: boolean; action: () => void }
 type EditDraft = { title: string; authors: string; publisher: string; language: string; published: string; subjects: string; series: string; seriesIndex: string; description: string }
 type MenuAnchor = { key: string; left: number; top: number }
 type IntakeRequest = { paths: string[]; names: string[]; device: { id: string; name: string } | null }
@@ -22,6 +24,7 @@ type PasteMenu = { left: number; top: number } | null
 const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1_000).toFixed(0)} KB` : n < 1_000_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${(n / 1_000_000_000).toFixed(1)} GB`
 
 export default function App() {
+  const updater = useUpdater()
   const [state, setState] = useState<AppState | null>(null)
   const [textSize, setTextSize] = useTextSize()
   const [navigation, setNavigation] = useState<{ pages: Page[]; index: number }>({ pages: ['library'], index: 0 })
@@ -58,6 +61,7 @@ export default function App() {
   const [intake, setIntake] = useState<IntakeRequest | null>(null)
   const [pasteMenu, setPasteMenu] = useState<PasteMenu>(null)
   const { entries, begin, update: updateActivity, remove: removeActivity } = useActivityLog()
+  const updateActivityID = useRef<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const importGuard = useRef(false)
   const transferGuard = useRef(false)
@@ -97,6 +101,15 @@ export default function App() {
     catch (e) { notify({ text: message(e), kind: 'error' }) }
     finally { refreshGuard.current = false }
   }, [])
+  useEffect(() => {
+    const next = updater.state
+    if (next.status === 'downloading' && !updateActivityID.current) updateActivityID.current = begin('update', 'Updating Attune')
+    const id = updateActivityID.current
+    if (!id) return
+    const status = next.downloaded ? 'success' : next.status === 'error' ? 'error' : 'running'
+    updateActivity(id, { status, current: next.progress || 0, total: 100, detail: next.downloaded ? 'Downloaded and verified · ready to restart' : next.error || `Downloading ${next.latestVersion}` })
+    if (status !== 'running') updateActivityID.current = null
+  }, [updater.state, begin, updateActivity])
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
     const timer = window.setInterval(() => { if (!busyRef.current && !importGuard.current) void refresh() }, 6000)
@@ -432,7 +445,7 @@ export default function App() {
   function confirmRemoveFromDevice(paths: string[]) {
     if (!device || !paths.length) return
     const single = paths.length === 1
-    setConfirmation({ title: `Remove ${paths.length} ${single ? 'book' : 'books'} from Kindle?`, description: 'Your library copies will stay on this Mac.', confirmLabel: 'Remove from Kindle', action: () => { void run(() => bridge.removeDeviceBooks(device.id, paths), async () => { setDeviceSelection(s => s.filter(path => !paths.includes(path))); setDeviceBooks(await bridge.getDeviceBooks(device.id)); notify({ text: `${single ? 'Book' : 'Books'} removed from Kindle`, kind: 'success' }) }) } })
+    setConfirmation({ title: `Remove ${paths.length} ${single ? 'book' : 'books'} from Kindle?`, description: 'Your library copies will stay on this computer.', confirmLabel: 'Remove from Kindle', action: () => { void run(() => bridge.removeDeviceBooks(device.id, paths), async () => { setDeviceSelection(s => s.filter(path => !paths.includes(path))); setDeviceBooks(await bridge.getDeviceBooks(device.id)); notify({ text: `${single ? 'Book' : 'Books'} removed from Kindle`, kind: 'success' }) }) } })
   }
   function removeFromDevice() { confirmRemoveFromDevice([...deviceSelection]) }
   function toggle(id: string, e?: React.MouseEvent) { setSelected(s => s.includes(id) ? s.filter(x => x !== id) : e?.shiftKey ? [...s, id] : [...s, id]) }
@@ -445,6 +458,11 @@ export default function App() {
     const width = 220
     setActiveMenu({ key, left: Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width)), top: Math.max(8, Math.min(window.innerHeight - 190, rect.bottom + 6)) })
   }
+  const restartDisabled = busy || importGuard.current || transferActive || changingLibrary
+  async function downloadUpdate() {
+    const next = await updater.download()
+    if (next?.downloaded) setConfirmation(current => current ?? { title: 'Your update is ready', description: 'The download is verified. Restart now to use the new version, or keep using Attune and it will be active the next time you open the app.', confirmLabel: 'Restart now', cancelLabel: 'Later', danger: false, action: () => { void updater.restart() } })
+  }
   const detailsVisible = page !== 'settings' && page !== 'updates'
   const detailsOpen = detailsVisible && !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
@@ -456,7 +474,7 @@ export default function App() {
         <button className={`rail-item ${page === 'device' ? 'active' : ''}`} data-drop-target={device ? 'device' : 'library'} aria-label="Reader" aria-current={page === 'device' ? 'page' : undefined} onClick={() => navigateTo('device')}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
       </nav>
       <div className="rail-spacer"/>
-      {state?.updateAvailable === true && <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} aria-label="Update available" aria-current={page === 'updates' ? 'page' : undefined} onClick={() => navigateTo('updates')}><Download/></button>}
+      {(updater.state.available || updater.state.downloaded) && <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} aria-label="Update available" aria-busy={updater.state.status === 'downloading'} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => { navigateTo('updates'); if (!updater.state.downloaded && updater.state.status !== 'downloading') void downloadUpdate() }}><Download/></button>}
       <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigateTo('settings')}><Settings2/></button>
     </aside>
 
@@ -468,14 +486,14 @@ export default function App() {
       <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>
       <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
       <div className="top-actions">
-        {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ F</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
+        {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ F' : 'Ctrl+F'}</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
         {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
         {page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy || transferActive}><Plus size={17}/><span>Import books</span></button>}
       </div>
     </header>
 
     <main className="main-panel" data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (page !== 'library' && page !== 'recent' && page !== 'device') return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
-      {page === 'settings' ? <Settings textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates/> : <>
+      {page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
@@ -707,7 +725,7 @@ function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave,
       <label>Description<textarea rows={5} value={draft.description} onChange={e => update('description', e.target.value)}/></label>
       <div className="edit-actions"><button className="quiet-button" onClick={onCancel}>Cancel</button><button className="toolbar-button primary-button" onClick={onSave} disabled={!draft.title.trim()}><Check size={15}/> Save</button></div>
     </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions"><button className="toolbar-button primary-button" onClick={onPreview}><BookOpen size={15}/> Read preview</button><button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to Kindle</button><button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><MetadataDetails metadata={book} format="EPUB" fileSize={book.fileSize}/></>}
-    <div className="detail-footer"><span>Original EPUB is safely stored on this Mac.</span><CircleHelp size={15}/></div>
+    <div className="detail-footer"><span>Original EPUB is safely stored on this computer.</span><CircleHelp size={15}/></div>
   </aside>
 }
 
@@ -748,17 +766,14 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
   return <div className="confirm-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onCancel() }}>
     <section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description" onKeyDown={trapFocus}>
       <h2 id="confirm-title">{confirmation.title}</h2><p id="confirm-description">{confirmation.description}</p>
-      <div className="confirm-actions"><button ref={cancelRef} className="toolbar-button" onClick={onCancel}>Cancel</button><button className="toolbar-button danger-button confirm-action" onClick={onConfirm}>{confirmation.confirmLabel}</button></div>
+      <div className="confirm-actions"><button ref={cancelRef} className="toolbar-button" onClick={onCancel}>{confirmation.cancelLabel || 'Cancel'}</button><button className={`toolbar-button ${confirmation.danger === false ? 'primary-button' : 'danger-button'} confirm-action`} onClick={onConfirm}>{confirmation.confirmLabel}</button></div>
     </section>
   </div>
 }
-function Settings({ textSize, setTextSize, state, onOpenFolder, onChangeLocation, changingLibrary, controlsDisabled }: { textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
+function Settings({ updates, onUpdates, textSize, setTextSize, state, onOpenFolder, onChangeLocation, changingLibrary, controlsDisabled }: { updates: UpdateState; onUpdates: () => void; textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
   const location = state?.libraryPath || 'Unavailable'
-  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
+  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><UpdateSettingsCard state={updates} onOpen={onUpdates}/><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
 }
 
-function Updates() {
-  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><RefreshCw size={22}/></div><div><h1>Updates</h1><p>Keep Attune up to date.</p></div></div><div className="settings-card updates-card"><div><strong>Software updates</strong><span>Updates will be available with the first published release.</span></div><button className="toolbar-button" disabled><RefreshCw size={16}/> Check for updates</button></div></section>
-}
 function stageName(stage: string) { return ({ queued: 'Waiting in queue', converting: 'Converting for Kindle', transferring: 'Copying to device', done: 'Saved to Kindle', cancelled: 'Transfer cancelled', error: 'Check your device and try again' } as Record<string, string>)[stage] ?? 'Preparing transfer' }
 function message(e: unknown) { return e instanceof Error ? e.message : String(e || 'Something went wrong. Try again.') }

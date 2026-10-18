@@ -1,6 +1,4 @@
 #!/bin/sh
 set -eu
-. "$(dirname "$0")/env.sh"
-(cd frontend && npm ci && npm run build)
-go test -race ./...
-go vet ./...
+mise run test
+mise run lint
