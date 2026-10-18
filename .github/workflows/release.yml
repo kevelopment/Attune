@@ -122,7 +122,7 @@ jobs:
       - name: Build and package (macOS/Linux)
         if: matrix.goos != 'windows'
         env:
-          VERSION: ${{ needs.validate.outputs.artifact_version }}
+          VERSION: ${{ needs.validate.outputs.publish == 'true' && needs.validate.outputs.artifact_version || needs.validate.outputs.version }}
           CGO_ENABLED: "1"
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -135,7 +135,7 @@ jobs:
         if: matrix.goos == 'windows'
         shell: pwsh
         env:
-          VERSION: ${{ needs.validate.outputs.artifact_version }}
+          VERSION: ${{ needs.validate.outputs.publish == 'true' && needs.validate.outputs.artifact_version || needs.validate.outputs.version }}
         run: ./scripts/build-release.ps1 -Version $env:VERSION
 
       - name: Lint
