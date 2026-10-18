@@ -479,14 +479,18 @@ export default function App() {
     </aside>
 
     <header className="topbar" data-drop-target={isDevice ? 'device' : 'library'}>
-      <div className="topbar-navigation" aria-label="Navigation history">
-        <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
-        <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
+      <div className="topbar-leading">
+        <div className="topbar-navigation" aria-label="Navigation history">
+          <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
+          <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
+        </div>
+        <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
       </div>
-      <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>
-      <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
-      <div className="top-actions">
+      <div className="topbar-center">
+        <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>
         {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ F' : 'Ctrl+F'}</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
+      </div>
+      <div className="top-actions">
         {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
         {page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy || transferActive}><Plus size={17}/><span>Import books</span></button>}
       </div>
