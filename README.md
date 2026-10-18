@@ -43,23 +43,21 @@ The preview is a quick way to check a book's contents and language before sendin
 
 ### A companion for your reader
 
-On macOS, connect a mounted USB Kindle to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
+Connect a mounted USB Kindle on macOS, Linux, or Windows to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
 
-Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Experimental USB discovery, transfer, and eject are implemented for macOS, Linux, and Windows, but have not been validated with physical devices across those platforms. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters. The currently published Windows and Linux alpha downloads predate this work and provide the library and preview only.
+Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Experimental USB discovery, transfer, and eject are implemented for macOS, Linux, and Windows, but have not been validated with physical devices across those platforms. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters.
 
 ## Download
 
-The first release, [v0.0.1-alpha.1](https://github.com/kevelopment/Attune/releases/tag/v0.0.1-alpha.1), is an early preview. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
+Attune 0.0.1 is the first stable release. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install 0.0.1 manually once.
 
-The currently published `v0.0.1-alpha.1` downloads have these capabilities:
-
-| Platform | Status | Package |
+| Platform | Features | Package |
 | --- | --- | --- |
-| macOS 13+ | Primary platform; library and USB Kindle management | App bundle in a ZIP archive |
-| Windows | Experimental; library and preview | ZIP archive |
-| Linux | Experimental; library and preview | Compressed application archive |
+| macOS 13+ | Library and experimental USB Kindle management | App bundle in a ZIP archive |
+| Windows | Library and experimental USB Kindle management | ZIP archive |
+| Linux | Library and experimental USB Kindle management | Compressed application archive |
 
-Windows and Linux runtime validation is still limited. macOS downloads are locally signed, not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for packaging, system requirements, and signing status.
+Physical-device behavior has not been validated on every platform. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters. Linux also requires GTK 3 and WebKit2GTK 4.1; Windows requires the WebView2 runtime. macOS downloads are ad-hoc signed and not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for details.
 
 ## Software updates
 
@@ -75,7 +73,7 @@ See [development](docs/development.md) for prerequisites, tasks, browser preview
 
 ## Where things stand
 
-Attune is an early project. The library, metadata editor, book preview, and experimental USB management for macOS, Linux, and Windows are implemented. PDF import and additional device families are future work.
+Attune 0.0.1 is the first stable release. The library, metadata editor, book preview, updater, and experimental USB management for macOS, Linux, and Windows are implemented. PDF import and additional device families are future work.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
