@@ -1,8 +1,25 @@
 # Developing Attune
 
-## macOS setup
+## Platform prerequisites
 
-Use macOS 13+, mise, and the Xcode command-line tools. Install the native prerequisites from the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation). Mise selects Go 1.26.9 and Node.js 22.22.1. Run `mise trust` once if mise asks to trust `mise.toml`.
+Install mise and the native prerequisites from the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation). Mise selects Go 1.26.9 and Node.js 22.22.1. Run `mise trust` once if mise asks to trust `mise.toml`.
+
+On macOS, use macOS 13+ and the Xcode command-line tools. On Linux, install the GTK 3 and WebKit2GTK 4.1 development packages. On Windows, install the MinGW-w64 UCRT64 GCC toolchain and PowerShell 7. Linux device discovery also requires `lsblk`; eject needs `udisksctl` and working UDisks/polkit permissions. Windows device discovery uses PowerShell Storage CIM cmdlets and requires an external volume with a drive letter. Physical-device eject has not been validated on all platforms; see the [README](../README.md) for current support limits.
+
+## Common tasks
+
+```sh
+mise run test
+mise run lint
+mise run build
+mise run dev
+```
+
+`test` runs Go tests with the race detector. `lint` checks Go formatting, runs `go vet`, and checks TypeScript without emitting files. `build` creates a desktop app for the current platform: a macOS app bundle, Linux archive, or Windows ZIP. Native builds need the platform prerequisites above.
+
+`dev` runs the browser-only preview with fictional demo books and covers. Open the local address with `?preview=1`; it cannot access the native library or a physical device.
+
+## macOS native development
 
 ```sh
 mise run up
@@ -11,32 +28,9 @@ mise run down
 
 `up` starts Vite and the native Wails app on the host. React and CSS changes hot-reload through Vite on port 5183; Go changes rebuild and restart the app. The Wails development server listens on port 34115. The app stores its persistent, isolated SQLite library in `.cache/dev-library`, separate from your normal Attune library. The pinned Kindling helper is fetched and checksum-verified on first start. Logs are in `.cache/dev/wails.log` (`tail -f .cache/dev/wails.log`). `down` preserves the development library and dependencies. Choose another frontend port with `ATTUNE_DEV_PORT=5184 mise run up`, or a library location with `ATTUNE_DEV_LIBRARY_HOME=/path/to/dev-library mise run up`. `./scripts/dev.sh` is an alias for `mise run up`.
 
-## Checks
+Go tests use temporary data and simulated devices. Passing CI checks does not replace physical-device testing. The native `mise run up` and `mise run down` tasks use a separate development library and preserve it between runs.
 
-```sh
-./scripts/test.sh
-```
-
-This builds the frontend, runs Go tests with the race detector, and runs `go vet`. Tests use temporary data and simulated devices rather than connected hardware. Real-device compatibility still needs hardware testing.
-
-## Desktop build
-
-```sh
-./scripts/build.sh
-open build/bin/Attune.app
-```
-
-The local build includes Kindling and its license, then applies an ad-hoc signature on macOS. See [releasing](releasing.md) for the multi-platform build workflow.
-
-## Browser preview
-
-```sh
-cd frontend
-npm ci
-npm run dev
-```
-
-This optional host-only browser preview uses fictional books and generated SVG covers. Open the displayed local address with `?preview=1`. It cannot access the native library or write to an actual device. It is never enabled by default in the desktop app.
+Desktop builds include Kindling and its license. The macOS app receives an ad-hoc signature. See [releasing](releasing.md) for the multi-platform build workflow.
 
 The README screenshots are captured from this preview, not from someone's personal library. See [screenshot notes](images/README.md).
 

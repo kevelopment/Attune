@@ -65,7 +65,12 @@ func mountedVolumes() ([]volume, error) {
 		if id == "" {
 			id = meta["DeviceIdentifier"]
 		}
-		out = append(out, volume{Root: root, ID: id, Name: first(meta["VolumeName"], meta["MediaName"], entry.Name()), External: true})
+		out = append(out, volume{Root: root, ID: id, Name: first(meta["VolumeName"], meta["MediaName"], entry.Name()), Device: meta["DeviceIdentifier"], External: true})
 	}
 	return out, nil
+}
+
+func ejectVolume(ctx context.Context, v volume, command func(context.Context, string, ...string) ([]byte, error)) error {
+	_, err := command(ctx, "diskutil", "eject", v.Root)
+	return err
 }

@@ -6,6 +6,8 @@ The first release is `v0.0.1-alpha.1`, an early preview. GitHub marks alpha, bet
 
 ## Release targets
 
+These are the currently published `v0.0.1-alpha.1` packages. Its Windows and Linux builds predate the experimental USB support now in the source tree.
+
 | Runner target | Download | Scope |
 | --- | --- | --- |
 | macOS, Apple Silicon | `Attune-macos-arm64-0.0.1-alpha.1.zip` | Library, preview, and USB Kindle management |
@@ -32,7 +34,8 @@ Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-r
 Check the local tree and checks before creating a tag:
 
 ```sh
-./scripts/test.sh
+mise run test
+mise run lint
 git status --short
 git tag -a v0.0.1-alpha.1 -m "Attune v0.0.1-alpha.1"
 git push origin v0.0.1-alpha.1
@@ -56,4 +59,4 @@ When updating Kindling, verify upstream release assets and hashes for every matr
 
 ## Validation limits
 
-Local macOS builds and Go race/vet checks can be run in this checkout. Linux and Windows source compile checks do not substitute for launching their GUI builds on those operating systems. The first GitHub Actions run is still needed to validate the hosted runner configuration; hardware testing is still needed for device support.
+Pull requests run native race tests and lint checks on macOS arm64, macOS x64, Linux x64, and Windows x64. Hardware testing is still needed for device support.
