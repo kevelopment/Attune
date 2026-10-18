@@ -226,6 +226,9 @@ jobs:
           if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
             printf 'This is an early prerelease.\n\n' >> dist/release-notes.txt
           fi
+          if [[ "$RELEASE_TAG" == "v0.0.1-alpha.1" ]]; then
+            printf 'This build includes Windows portability fixes for SQLite test cleanup and filesystem timestamp precision.\n\n' >> dist/release-notes.txt
+          fi
           printf 'See INSTALL.txt for platform requirements and support notes.\n' >> dist/release-notes.txt
           if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
             gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \

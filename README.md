@@ -49,7 +49,7 @@ Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 
 
 ## Download
 
-The first release, [v0.0.1-alpha](https://github.com/kevelopment/Attune/releases/tag/v0.0.1-alpha), is an early preview. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
+The first release, [v0.0.1-alpha.1](https://github.com/kevelopment/Attune/releases/tag/v0.0.1-alpha.1), is an early preview. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
 
 | Platform | Status | Package |
 | --- | --- | --- |

@@ -64,6 +64,7 @@ func testApp(t *testing.T) *App {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	d := model.Device{ID: "fake-kindle", Name: "Kindle", Root: filepath.Join(t.TempDir(), "device")}
 	return &App{ctx: context.Background(), root: root, store: store, manager: &fakeManager{device: d}, converter: &fakeConverter{}, converterVersion: "test", selected: map[string]model.Device{}, emit: func(string, ...interface{}) {}}
 }

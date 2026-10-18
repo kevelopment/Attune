@@ -92,8 +92,8 @@ func TestDeviceFileTimesUseFilesystemMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	modified, added := deviceFileTimes(st)
-	if modified != want.Format(time.RFC3339Nano) {
-		t.Fatalf("modifiedAt = %q, want %q", modified, want.Format(time.RFC3339Nano))
+	if expected := st.ModTime().UTC().Format(time.RFC3339Nano); modified != expected {
+		t.Fatalf("modifiedAt = %q, want filesystem timestamp %q", modified, expected)
 	}
 	if added != "" {
 		if _, err := time.Parse(time.RFC3339Nano, added); err != nil {

@@ -2,16 +2,16 @@
 
 The release workflow builds on native GitHub-hosted runners, bundles the pinned Kindling helper, and publishes versioned GitHub Releases only after every required build succeeds. Creating this workflow does not publish anything by itself.
 
-The first release is `v0.0.1-alpha`, an early preview. GitHub marks alpha, beta, and release-candidate tags as prereleases.
+The first release is `v0.0.1-alpha.1`, an early preview. GitHub marks alpha, beta, and release-candidate tags as prereleases.
 
 ## Release targets
 
 | Runner target | Download | Scope |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1-alpha.zip` | Library, preview, and USB Kindle management |
-| macOS, Intel | `Attune-macos-amd64-0.0.1-alpha.zip` | Same feature scope; separate CPU build |
-| Windows, x64 | `Attune-windows-amd64-0.0.1-alpha.zip` | Experimental library and preview; USB management unavailable |
-| Linux, x64 | `Attune-linux-amd64-0.0.1-alpha.tar.gz` | Experimental library and preview; USB management unavailable |
+| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1-alpha.1.zip` | Library, preview, and USB Kindle management |
+| macOS, Intel | `Attune-macos-amd64-0.0.1-alpha.1.zip` | Same feature scope; separate CPU build |
+| Windows, x64 | `Attune-windows-amd64-0.0.1-alpha.1.zip` | Experimental library and preview; USB management unavailable |
+| Linux, x64 | `Attune-linux-amd64-0.0.1-alpha.1.tar.gz` | Experimental library and preview; USB management unavailable |
 
 `SHA256SUMS.txt` accompanies the downloadable archives. macOS packages contain `Attune.app`; Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
 
@@ -27,15 +27,15 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 ## Publish a version
 
-Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha` builds a native app with product version `0.0.1` and publishes a GitHub prerelease. The frontend package retains the full semantic version `0.0.1-alpha`.
+Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha.1` builds a native app with product version `0.0.1` and publishes a GitHub prerelease. The frontend package retains the full semantic version `0.0.1-alpha.1`.
 
 Check the local tree and checks before creating a tag:
 
 ```sh
 ./scripts/test.sh
 git status --short
-git tag -a v0.0.1-alpha -m "Attune v0.0.1-alpha"
-git push origin v0.0.1-alpha
+git tag -a v0.0.1-alpha.1 -m "Attune v0.0.1-alpha.1"
+git push origin v0.0.1-alpha.1
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.
