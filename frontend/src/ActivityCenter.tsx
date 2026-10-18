@@ -5,7 +5,7 @@ import './ActivityCenter.css'
 
 export type ActivityEntry = {
   id: string
-  kind: 'import' | 'transfer' | 'eject'
+  kind: 'import' | 'transfer' | 'eject' | 'update'
   status: 'running' | 'success' | 'error' | 'cancelled'
   title: string
   detail: string

@@ -17,7 +17,9 @@ mise run dev
 
 `test` runs Go tests with the race detector. `lint` checks Go formatting, runs `go vet`, and checks TypeScript without emitting files. `build` creates a desktop app for the current platform: a macOS app bundle, Linux archive, or Windows ZIP. Native builds need the platform prerequisites above.
 
-`dev` runs the browser-only preview with fictional demo books and covers. Open the local address with `?preview=1`; it cannot access the native library or a physical device.
+`dev` runs the browser-only preview with fictional demo books and covers. Open the local address printed by Vite; it cannot access the native library or a physical device.
+
+The installed desktop app checks public GitHub releases and can download and stage an update. Browser preview does not have the native update action.
 
 ## macOS native development
 

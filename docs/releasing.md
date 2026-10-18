@@ -29,7 +29,7 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 ## Publish a version
 
-Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha.1` builds a native app with product version `0.0.1` and publishes a GitHub prerelease. The frontend package retains the full semantic version `0.0.1-alpha.1`.
+Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha.1` builds a native app with numeric Wails product version `0.0.1` and publishes a GitHub prerelease. The release scripts embed the full semantic version (`0.0.1-alpha.1`) in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
 Check the local tree and checks before creating a tag:
 

@@ -13,6 +13,7 @@ run = "./scripts/dev-down.sh"
 [tasks.dev]
 description = "Run the browser-only preview"
 run = ["npm --prefix frontend ci", "npm --prefix frontend run dev"]
+env = { VITE_ATTUNE_PREVIEW = "1" }
 
 [tasks._frontend-build]
 hide = true

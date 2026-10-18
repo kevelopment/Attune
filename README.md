@@ -61,6 +61,10 @@ The currently published `v0.0.1-alpha.1` downloads have these capabilities:
 
 Windows and Linux runtime validation is still limited. macOS downloads are locally signed, not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for packaging, system requirements, and signing status.
 
+## Software updates
+
+Attune checks public GitHub releases for updates; no account is required. When an update is available, click its download icon. Attune downloads and verifies the update before offering **Restart now** or **Later**. A staged update installs when you quit and is active the next time you open Attune; your library stays in place. The installed app folder must be writable. Older builds without the updater need a one-time manual download from the [Releases page](https://github.com/kevelopment/Attune/releases).
+
 ## Build from source
 
 Attune uses **Go · Wails v2 · React · TypeScript · SQLite**. It uses the operating system's webview rather than shipping a separate browser engine. [Kindling](https://github.com/ciscoriordan/kindling) provides standalone EPUB-to-MOBI conversion.

@@ -51,6 +51,40 @@ jobs:
           Add-Content $env:GITHUB_PATH $mingw
 
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+
+      - name: Locate Go caches (Unix)
+        if: matrix.runner != 'windows-2025'
+        id: go-cache
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+
+      - name: Locate Go caches (Windows)
+        if: matrix.runner == 'windows-2025'
+        id: go-cache-windows
+        shell: pwsh
+        run: |
+          "gocache=$(go env GOCACHE)" >> $env:GITHUB_OUTPUT
+          "gomodcache=$(go env GOMODCACHE)" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.runner != 'windows-2025'
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.gocache }}
+            ${{ steps.go-cache.outputs.gomodcache }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.runner == 'windows-2025'
+        with:
+          path: |
+            ${{ steps.go-cache-windows.outputs.gocache }}
+            ${{ steps.go-cache-windows.outputs.gomodcache }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Test
         run: mise run test
 
@@ -75,4 +109,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      - name: Locate Go caches
+        id: go-cache
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.gocache }}
+            ${{ steps.go-cache.outputs.gomodcache }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
       - run: mise run lint
