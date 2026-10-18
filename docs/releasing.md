@@ -2,18 +2,18 @@
 
 The release workflow builds on native GitHub-hosted runners, bundles the pinned Kindling helper, and publishes versioned GitHub Releases only after every required build succeeds. Creating this workflow does not publish anything by itself.
 
-The first release is `v0.0.1-alpha.1`, an early preview. GitHub marks alpha, beta, and release-candidate tags as prereleases.
+The first stable release is `v0.0.1`. Older alpha releases remain available in GitHub Releases; this version updates the app, package metadata, and documentation to stable `0.0.1`.
 
 ## Release targets
 
-These are the currently published `v0.0.1-alpha.1` packages. Its Windows and Linux builds predate the experimental USB support now in the source tree.
+The `v0.0.1` release builds all four targets with the library, preview, updater, and experimental USB Kindle discovery, transfer, and eject. Physical devices have not been validated on every platform.
 
 | Runner target | Download | Scope |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1-alpha.1.zip` | Library, preview, and USB Kindle management |
-| macOS, Intel | `Attune-macos-amd64-0.0.1-alpha.1.zip` | Same feature scope; separate CPU build |
-| Windows, x64 | `Attune-windows-amd64-0.0.1-alpha.1.zip` | Experimental library and preview; USB management unavailable |
-| Linux, x64 | `Attune-linux-amd64-0.0.1-alpha.1.tar.gz` | Experimental library and preview; USB management unavailable |
+| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1.zip` | Library, preview, updater, experimental USB Kindle management |
+| macOS, Intel | `Attune-macos-amd64-0.0.1.zip` | Same feature scope; separate CPU build |
+| Windows, x64 | `Attune-windows-amd64-0.0.1.zip` | Library, preview, updater, experimental USB Kindle management |
+| Linux, x64 | `Attune-linux-amd64-0.0.1.tar.gz` | Library, preview, updater, experimental USB Kindle management |
 
 `SHA256SUMS.txt` accompanies the downloadable archives. macOS packages contain `Attune.app`; Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
 
@@ -29,16 +29,16 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 ## Publish a version
 
-Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha.1` builds a native app with numeric Wails product version `0.0.1` and publishes a GitHub prerelease. The release scripts embed the full semantic version (`0.0.1-alpha.1`) in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
+Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1` builds a native app with Wails product version `0.0.1` and publishes a stable GitHub Release. The release scripts embed the full semantic version in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-Choose the next unused version tag. Since `v0.0.1-alpha.1` is already published, the example below uses `v0.0.1-alpha.2`:
+Choose the next unused version tag. After the first stable `v0.0.1` release, the next example is `v0.0.2`:
 
 ```sh
 mise run test
 mise run lint
 git status --short
-git tag -a v0.0.1-alpha.2 -m "Attune v0.0.1-alpha.2"
-git push origin v0.0.1-alpha.2
+git tag -a v0.0.2 -m "Attune v0.0.2"
+git push origin v0.0.2
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.
