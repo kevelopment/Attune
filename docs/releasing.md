@@ -31,14 +31,14 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha.1` builds a native app with numeric Wails product version `0.0.1` and publishes a GitHub prerelease. The release scripts embed the full semantic version (`0.0.1-alpha.1`) in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-Check the local tree and checks before creating a tag:
+Choose the next unused version tag. Since `v0.0.1-alpha.1` is already published, the example below uses `v0.0.1-alpha.2`:
 
 ```sh
 mise run test
 mise run lint
 git status --short
-git tag -a v0.0.1-alpha.1 -m "Attune v0.0.1-alpha.1"
-git push origin v0.0.1-alpha.1
+git tag -a v0.0.1-alpha.2 -m "Attune v0.0.1-alpha.2"
+git push origin v0.0.1-alpha.2
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.
@@ -59,4 +59,4 @@ When updating Kindling, verify upstream release assets and hashes for every matr
 
 ## Validation limits
 
-Pull requests run native race tests and lint checks on macOS arm64, macOS x64, Linux x64, and Windows x64. Hardware testing is still needed for device support.
+Pull requests run native race tests on macOS arm64, macOS x64, Linux x64, and Windows x64. The Linux lint job checks Go formatting, `go vet`, and TypeScript types. Physical-device behavior has not been validated on every platform.
