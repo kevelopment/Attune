@@ -46,8 +46,9 @@ The README screenshots are captured from this preview, not from someone's person
 | `internal/device` | Mounted-volume validation and verified transfers |
 | `internal/converter` | Kindling process and conversion cache |
 | `frontend/src` | React interface, styles, and native/preview bridge |
-| `frontend/public/attune.svg` | Editable app mark and browser favicon |
-| `build/appicon.png` | Raster app icon used by Wails |
+| `frontend/public/attune-dark.svg`, `attune-light.svg` | Editable app icon sources for dark and light appearance |
+| `frontend/public/attune.svg` | Browser favicon that follows the system appearance |
+| `build/appicon.png`, `appicon-light.png` | Raster icons rendered from the SVGs; Wails bundles the dark one, and macOS swaps the Dock icon to match the appearance while Attune runs |
 | `third_party/kindling` | Pinned helper metadata and upstream license |
 
 ## Local data

@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="frontend/public/attune.svg" width="104" height="104" alt="Attune open book icon">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/attune-dark.svg">
+    <img src="frontend/public/attune-light.svg" width="104" height="104" alt="Attune icon: a book page beside an e-reader">
+  </picture>
 </p>
 
 <h1 align="center">Attune</h1>
