@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
+import { useTextSize, type TextSize } from './appearance'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
@@ -17,6 +18,7 @@ const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null)
+  const [textSize, setTextSize] = useTextSize()
   const [navigation, setNavigation] = useState<{ pages: Page[]; index: number }>({ pages: ['library'], index: 0 })
   const page = navigation.pages[navigation.index]
   const [query, setQuery] = useState('')
@@ -28,7 +30,7 @@ export default function App() {
   const [selected, setSelected] = useState<string[]>([])
   const [focusedBook, setFocusedBook] = useState<Book | null>(null)
   const [focusedDeviceBook, setFocusedDeviceBook] = useState<DeviceBook | null>(null)
-  const [detailWidth, setDetailWidth] = useState(260)
+  const [detailWidth, setDetailWidth] = useState(() => Math.min(400, Math.max(300, Math.round(window.innerWidth * 0.27))))
   const [deviceBooks, setDeviceBooks] = useState<DeviceBook[]>([])
   const [deviceBooksLoading, setDeviceBooksLoading] = useState(false)
   const [deviceBooksError, setDeviceBooksError] = useState('')
@@ -328,6 +330,7 @@ export default function App() {
         <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
         <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
       </div>
+      <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? (device ? 'On your Kindle' : 'Kindle disconnected') : page === 'settings' ? 'Settings' : 'Updates'}</h1>
       <div className="top-actions">
         {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ F</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
         {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
@@ -336,28 +339,24 @@ export default function App() {
     </header>
 
     <main className="main-panel">
-      {page === 'settings' ? <Settings state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates/> : <>
+      {page === 'settings' ? <Settings textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
-          <button className="toolbar-button eject-button" onClick={eject}><Power size={16}/><span>Eject</span></button>
+          <button className="toolbar-button eject-button" title="Eject Kindle" aria-label="Eject Kindle" onClick={eject}><Power size={16}/><span>Eject</span></button>
         </section> : null}
         <section className="content-heading">
-          <div><h1>{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : device ? 'On your Kindle' : 'Kindle disconnected'}</h1><p>{isDevice ? device ? `${visibleDeviceBooks.length} ${visibleDeviceBooks.length === 1 ? 'book' : 'books'} on this device` : 'Reconnect your Kindle to view its books.' : `${books.length} ${books.length === 1 ? 'book' : 'books'} in your library`}</p></div>
-          <div className="view-actions">
-            <div className="filter-row" aria-label="Filter books">
-              <FilterSelect label="Author" value={authorFilter} values={metadata.authors.values} hasUnknown={metadata.authors.missing} onChange={setAuthorFilter}/>
-              <FilterSelect label="Genre" value={genreFilter} values={metadata.genres.values} hasUnknown={metadata.genres.missing} onChange={setGenreFilter}/>
-              <FilterSelect label="Language" value={languageFilter} values={metadata.languages.values} hasUnknown={metadata.languages.missing} onChange={setLanguageFilter}/>
-              {(authorFilter || genreFilter || languageFilter) && <button className="clear-filters" onClick={() => { setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}>Clear</button>}
-            </div>
-            {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button" onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}<button className="toolbar-button" onClick={() => navigateTo('library')}><Send size={16}/><span>Add from library</span></button></> : <>
-              {selected.length > 0 && <button className="toolbar-button danger-button" onClick={() => void deleteSelected()}><Trash2 size={16}/><span>Remove ({selected.length})</span></button>}
-              {selected.length > 0 && device && <button className="toolbar-button" onClick={() => void send(selected)} disabled={transferActive}><Send size={16}/><span>Send to Kindle <em>{selected.length}</em></span></button>}
-              <label className="sort-select"><ArrowDownUp size={15}/><select aria-label="Sort books" value={sort} onChange={e => setSort(e.target.value as Sort)}><option value="recent">{isDevice ? 'Device order' : 'Recently added'}</option><option value="title">Title</option><option value="author">Author</option></select></label>
-            </>}
+          <div className="library-toolbar">
+            <span className="book-count">{isDevice ? `${visibleDeviceBooks.length} ${visibleDeviceBooks.length === 1 ? 'book' : 'books'}` : `${books.length} ${books.length === 1 ? 'book' : 'books'}`}</span>
+            <FilterPicker authorFilter={authorFilter} genreFilter={genreFilter} languageFilter={languageFilter} metadata={metadata} setAuthorFilter={setAuthorFilter} setGenreFilter={setGenreFilter} setLanguageFilter={setLanguageFilter}/>
+            <label className="sort-select" title="Sort books"><ArrowDownUp size={15}/><select aria-label="Sort books" value={sort} onChange={e => setSort(e.target.value as Sort)}><option value="recent">{isDevice ? 'Device order' : 'Recently added'}</option><option value="title">Title</option><option value="author">Author</option></select></label>
             <div className="segmented" role="group" aria-label="View layout"><button aria-label="Grid view" aria-pressed={layout === 'grid'} className={layout === 'grid' ? 'chosen' : ''} onClick={() => setLayout('grid')}><Grid2X2 size={16}/></button><button aria-label="List view" aria-pressed={layout === 'list'} className={layout === 'list' ? 'chosen' : ''} onClick={() => setLayout('list')}><List size={17}/></button></div>
+            {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${deviceSelection.length} selected books from device`} aria-label={`Remove ${deviceSelection.length} selected books from device`} onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}<button className="toolbar-button compact-action" title="Add from library" aria-label="Add from library" onClick={() => navigateTo('library')}><Send size={16}/><span>Add from library</span></button></> : <>
+              {selected.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${selected.length} selected books`} aria-label={`Remove ${selected.length} selected books`} onClick={() => void deleteSelected()}><Trash2 size={16}/><span>Remove ({selected.length})</span></button>}
+              {selected.length > 0 && device && <button className="toolbar-button compact-action" title={`Send ${selected.length} selected books to Kindle`} aria-label={`Send ${selected.length} selected books to Kindle`} onClick={() => void send(selected)} disabled={transferActive}><Send size={16}/><span>Send to Kindle <em>{selected.length}</em></span></button>}
+            </>}
           </div>
+          {(authorFilter || genreFilter || languageFilter) && <div className="applied-filter-tags" aria-label="Applied filters">{authorFilter && <FilterTag label="Author" value={authorFilter === unknownFilter ? 'Unknown' : authorFilter} onRemove={() => setAuthorFilter('')}/ >}{genreFilter && <FilterTag label="Genre" value={genreFilter === unknownFilter ? 'Unknown' : genreFilter} onRemove={() => setGenreFilter('')}/ >}{languageFilter && <FilterTag label="Language" value={languageFilter === unknownFilter ? 'Unknown' : languageLabel(languageFilter)} onRemove={() => setLanguageFilter('')}/ >}<button className="clear-filters" onClick={() => { setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}>Clear all</button></div>}
         </section>
         <div className={`book-area ${dragging ? 'dragging' : ''}`}>
           {dragging && <div className="drop-overlay"><div><Upload size={27}/><b>Drop EPUBs to add them</b><span>Your originals stay untouched</span></div></div>}
@@ -416,6 +415,20 @@ function matchesFilter(values: string[] | undefined, selected: string) {
   if (!selected) return true
   const present = (values ?? []).some(value => value.trim())
   return selected === unknownFilter ? !present : (values ?? []).includes(selected)
+}
+function FilterTag({ label, value, onRemove }: { label: string; value: string; onRemove: () => void }) { return <span className="filter-tag"><span>{label}: {value}</span><button aria-label={`Remove ${label} filter`} onClick={onRemove}><X size={12}/></button></span> }
+function FilterPicker({ authorFilter, genreFilter, languageFilter, metadata, setAuthorFilter, setGenreFilter, setLanguageFilter }: { authorFilter: string; genreFilter: string; languageFilter: string; metadata: { authors: { values: string[]; missing: boolean }; genres: { values: string[]; missing: boolean }; languages: { values: string[]; missing: boolean } }; setAuthorFilter: (value: string) => void; setGenreFilter: (value: string) => void; setLanguageFilter: (value: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); trigger.current?.focus() } }
+    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape)
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape) }
+  }, [open])
+  const active = [authorFilter, genreFilter, languageFilter].filter(Boolean).length
+  return <div className="filter-picker" ref={root}><button ref={trigger} className={`filter-trigger ${active ? 'has-filters' : ''}`} aria-label={`Filters${active ? ` (${active} active)` : ''}`} title="Filter books" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(v => !v)}><Settings2 size={15}/> Filters{active > 0 && <span>{active}</span>}</button>{open && <div className="filter-popover" role="dialog" aria-label="Filter books"><FilterSelect label="Author" value={authorFilter} values={metadata.authors.values} hasUnknown={metadata.authors.missing} onChange={setAuthorFilter}/><FilterSelect label="Genre" value={genreFilter} values={metadata.genres.values} hasUnknown={metadata.genres.missing} onChange={setGenreFilter}/><FilterSelect label="Language" value={languageFilter} values={metadata.languages.values} hasUnknown={metadata.languages.missing} onChange={setLanguageFilter}/></div>}</div>
 }
 function FilterSelect({ label, value, values, hasUnknown, onChange }: { label: string; value: string; values: string[]; hasUnknown: boolean; onChange: (value: string) => void }) {
   const plural = label === 'Genre' ? 'genres' : `${label.toLowerCase()}s`
@@ -492,13 +505,13 @@ function DeviceDetailsPanel({ book, libraryBook, onClose, onPreview }: { book: D
 
 function ResizeHandle({ width, onWidthChange }: { width: number; onWidthChange: (width: number) => void }) {
   const dragging = useRef(false)
-  const setFromPointer = (clientX: number) => onWidthChange(Math.max(240, Math.min(480, window.innerWidth - 12 - clientX)))
-  return <button className="detail-resize-handle" role="separator" aria-label="Resize book details panel" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={480} aria-valuenow={width} tabIndex={0}
+  const setFromPointer = (clientX: number) => onWidthChange(Math.max(300, Math.min(480, window.innerWidth - clientX - 12)))
+  return <button className="detail-resize-handle" role="separator" aria-label="Resize book details panel" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={480} aria-valuenow={width} tabIndex={0}
     onPointerDown={e => { e.preventDefault(); e.currentTarget.focus(); dragging.current = true; e.currentTarget.setPointerCapture(e.pointerId) }}
     onPointerMove={e => { if (dragging.current) setFromPointer(e.clientX) }}
     onPointerUp={e => { dragging.current = false; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }}
     onPointerCancel={() => { dragging.current = false }}
-    onKeyDown={e => { if (e.key === 'ArrowLeft') { e.preventDefault(); onWidthChange(Math.min(480, width + 16)) } else if (e.key === 'ArrowRight') { e.preventDefault(); onWidthChange(Math.max(240, width - 16)) } }} />
+    onKeyDown={e => { if (e.key === 'ArrowLeft') { e.preventDefault(); onWidthChange(Math.min(480, width + 16)) } else if (e.key === 'ArrowRight') { e.preventDefault(); onWidthChange(Math.max(300, width - 16)) } }} />
 }
 
 type MetadataSource = Pick<DeviceBook, 'publisher' | 'published' | 'identifiers' | 'description' | 'series' | 'seriesIndex' | 'authorSort' | 'titleSort' | 'pageCount' | 'addedAt' | 'modifiedAt' | 'language' | 'subjects'>
@@ -599,9 +612,9 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
     </section>
   </div>
 }
-function Settings({ state, onOpenFolder, onChangeLocation, changingLibrary, controlsDisabled }: { state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
+function Settings({ textSize, setTextSize, state, onOpenFolder, onChangeLocation, changingLibrary, controlsDisabled }: { textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
   const location = state?.libraryPath || 'Unavailable'
-  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><h1>Settings</h1><p>A few details about your library.</p></div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
+  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
 }
 
 function Updates() {
