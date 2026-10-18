@@ -2,14 +2,30 @@ package library
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"attune/internal/model"
 )
+
+func fileHash(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
 func fixtureEPUB(t *testing.T, filename, title string) {
 	t.Helper()
