@@ -50,6 +50,7 @@ if [ "$goos" = darwin ]; then
   codesign --force --deep --sign - "$app"
   codesign --verify --deep --strict "$app"
   ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Attune-macos-$goarch.zip"
+  sh scripts/build-macos-dmg.sh "$app" "$goarch"
 elif [ "$goos" = linux ]; then
   cp build/bin/Attune "$stage/Attune"
   cp "$helper" "$stage/kindling-cli"

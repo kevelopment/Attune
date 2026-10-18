@@ -4,6 +4,16 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version to build when creating a draft release
+        required: false
+        type: string
+      create_draft:
+        description: Create or refresh a draft GitHub Release at this workflow run's commit
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,20 +27,37 @@ jobs:
       artifact_version: ${{ steps.version.outputs.artifact_version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       publish: ${{ steps.version.outputs.publish }}
+      draft: ${{ steps.version.outputs.draft }}
     steps:
       - name: Validate release tag
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          CREATE_DRAFT: ${{ inputs.create_draft }}
         shell: bash
         run: |
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$CREATE_DRAFT" == "true" ]]; then
+              if [[ ! "$INPUT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+                echo "Draft releases require a stable MAJOR.MINOR.PATCH version input (for example 0.0.2)." >&2
+                exit 1
+              fi
+              echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+              echo "tag=v$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+              echo "artifact_version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "draft=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "version=0.0.0" >> "$GITHUB_OUTPUT"
             echo "tag=" >> "$GITHUB_OUTPUT"
             echo "artifact_version=0.0.0-manual" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ ! "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((alpha|beta|rc)(\.(0|[1-9][0-9]*))?))?$ ]]; then
@@ -40,6 +67,7 @@ jobs:
           echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
           echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
           echo "artifact_version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "draft=false" >> "$GITHUB_OUTPUT"
           if [[ -n "${BASH_REMATCH[4]}" ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
@@ -73,6 +101,11 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: startsWith(matrix.goos, 'darwin')
+        with:
+          python-version: '3.12'
 
       - name: Build frontend assets
         run: |
@@ -153,7 +186,7 @@ jobs:
 
   publish:
     needs: [validate, build]
-    if: github.event_name == 'push' && needs.validate.outputs.publish == 'true'
+    if: (github.event_name == 'push' && needs.validate.outputs.publish == 'true') || (github.event_name == 'workflow_dispatch' && needs.validate.outputs.draft == 'true')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -173,15 +206,17 @@ jobs:
             case "$file" in
               *.tar.gz) base=${file%.tar.gz}; suffix=.tar.gz ;;
               *.zip) base=${file%.zip}; suffix=.zip ;;
+              *.dmg) base=${file%.dmg}; suffix=.dmg ;;
               *) continue ;;
             esac
+            case "$base" in *-"$RELEASE_VERSION") continue ;; esac
             mv -- "$file" "${base}-${RELEASE_VERSION}${suffix}"
           done
           sha256sum Attune-* > SHA256SUMS.txt
           cat > INSTALL.txt <<'EOF'
           Attune release packages
 
-          macOS: open the .app from the archive. Packages are ad-hoc signed and are not notarized.
+          macOS: open the DMG and drag Attune.app onto the Applications shortcut. The ZIP package is used for in-app updates. Downloads are ad-hoc signed and not Apple-notarized; follow Apple's Open Anyway instructions at https://support.apple.com/en-us/102445 if Gatekeeper blocks first launch.
           Linux amd64: experimental; GTK 3 and WebKit2GTK 4.1 runtime libraries are required. USB management needs lsblk, udisksctl, and working UDisks/polkit permissions.
           Windows amd64: experimental; Microsoft Edge WebView2 Runtime and PowerShell Storage CIM cmdlets are required. USB management requires a USB/removable volume with a drive letter and stable IDs.
           Experimental Kindle USB discovery, transfer, and eject are implemented on macOS, Linux, and Windows; physical-device support still needs validation on each platform.
@@ -193,6 +228,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           RELEASE_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          RELEASE_DRAFT: ${{ needs.validate.outputs.draft }}
         run: |
           notes_file=".github/release-notes/${RELEASE_TAG#v}.md"
           if [[ -f "$notes_file" ]]; then
@@ -204,10 +240,45 @@ jobs:
             fi
             printf 'See INSTALL.txt for platform requirements and support notes.\n' >> dist/release-notes.txt
           fi
-          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+          if [[ "$RELEASE_DRAFT" == "true" ]]; then
+            remote_tag_commit=$(git ls-remote origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { tag=$1 } END { print peeled ? peeled : tag }')
+            if [[ -n "$remote_tag_commit" && "$remote_tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Refusing to create a draft for $RELEASE_TAG: the existing tag points at a different commit." >&2
+              exit 1
+            fi
+            existing_release=$(gh release view "$RELEASE_TAG" --json isDraft,targetCommitish 2>/dev/null || true)
+            if [[ -n "$existing_release" ]]; then
+              existing_draft=$(jq -r '.isDraft' <<< "$existing_release")
+              existing_target=$(jq -r '.targetCommitish' <<< "$existing_release")
+              if [[ "$existing_draft" != "true" || "$existing_target" != "$GITHUB_SHA" ]]; then
+                echo "Refusing to update $RELEASE_TAG: an existing release must be a draft for this exact commit." >&2
+                exit 1
+              fi
+              gh release edit "$RELEASE_TAG" --draft --target "$GITHUB_SHA" --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
+              gh release upload "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt --clobber
+            else
+              gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
+                --draft --target "$GITHUB_SHA" --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
+            fi
+          elif [[ "$RELEASE_PRERELEASE" == "true" ]]; then
             gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
               --verify-tag --prerelease --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
           else
+            existing_release=$(gh release view "$RELEASE_TAG" --json isDraft 2>/dev/null || true)
+            if [[ -n "$existing_release" ]]; then
+              existing_draft=$(jq -r '.isDraft' <<< "$existing_release")
+              if [[ "$existing_draft" == "false" ]]; then
+                echo "$RELEASE_TAG is already public; preserving its immutable release assets."
+                exit 0
+              fi
+              existing_target=$(gh release view "$RELEASE_TAG" --json targetCommitish --jq '.targetCommitish')
+              if [[ "$existing_target" == "$GITHUB_SHA" ]]; then
+                echo "$RELEASE_TAG is an existing draft for this exact commit; preserving its assets."
+                exit 0
+              fi
+              echo "$RELEASE_TAG already has a draft for a different commit; refusing to overwrite it." >&2
+              exit 1
+            fi
             gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
               --verify-tag --latest --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
           fi

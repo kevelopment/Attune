@@ -5,6 +5,8 @@ frontend/*.tsbuildinfo
 frontend/package.json.md5
 build/bin/
 build/release/
+build/dmg-python/
+build/darwin/dmg-background.*
 dist/
 evidence/
 .DS_Store
