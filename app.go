@@ -63,6 +63,7 @@ func NewApp() *App { return &App{selected: make(map[string]model.Device)} }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	followSystemAppIcon()
 	a.emit = func(event string, data ...interface{}) { wruntime.EventsEmit(ctx, event, data...) }
 	envRoot := os.Getenv("EBOOK_LIBRARY_HOME")
 	root := envRoot
