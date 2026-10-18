@@ -29,9 +29,9 @@ Keep your EPUBs together, tidy their details, and send a few good books to your 
 
 | Make room for your books | Take a closer look |
 | --- | --- |
-| Import DRM-free EPUBs by dropping files or using the picker. Follow batch progress and skip exact duplicates. | Browse a cover grid or compact list. Search, sort, and filter by author, genre, or language. |
+| Import DRM-free EPUBs by dropping files, using the picker, or pasting copied files (Linux needs `wl-paste` or `xclip`). Track progress and skip exact duplicates. | Browse a cover grid or compact list. Search, sort, and filter by author, genre, or language. |
 | Correct titles, authors, publisher, dates, genres, series, and descriptions in a resizable details panel. | Preview chapters, local book styling, and images in a centered reading page. |
-| Keep original EPUBs intact in an app-managed library. | Choose book actions from the three-dot menu or select several books at once. |
+| Keep original EPUBs intact in an app-managed library, choose its location, and adjust text size. | Track imports, transfers, and ejections in session activity; choose book actions or select several books at once. |
 
 ### A small pause before the next chapter
 
@@ -45,11 +45,11 @@ The preview is a quick way to check a book's contents and language before sendin
 
 On macOS, connect a mounted USB Kindle to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
 
-The initial device target is **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Device support and operating-system support are separate: Windows and Linux builds currently offer the library and preview; USB management is macOS-only.
+Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Device support and operating-system support are separate: Windows and Linux builds currently offer the library and preview; USB management is macOS-only.
 
 ## Download
 
-Open this repository's **Releases** page and choose the archive for your operating system and CPU. Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
+The first release, [v0.0.1-alpha](https://github.com/kevelopment/Attune/releases/tag/v0.0.1-alpha), is an early preview. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
 
 | Platform | Status | Package |
 | --- | --- | --- |

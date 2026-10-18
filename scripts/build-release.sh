@@ -32,6 +32,8 @@ stage="build/release/Attune-$goos-$goarch"
 mkdir -p "$stage/licenses" dist
 cp LICENSE "$stage/licenses/Attune-LICENSE.txt"
 cp THIRD_PARTY_NOTICES.md "$stage/licenses/"
+cp THIRD_PARTY_LICENSES.txt "$stage/licenses/"
+cp third_party/kindling/THIRD_PARTY_LICENSES.txt "$stage/licenses/Kindling-THIRD_PARTY_LICENSES.txt"
 cp third_party/kindling/LICENSE "$stage/licenses/Kindling-LICENSE.txt"
 if [ "$goos" = darwin ]; then
   app=build/bin/Attune.app
@@ -39,6 +41,8 @@ if [ "$goos" = darwin ]; then
   cp "$helper" "$app/Contents/Resources/kindling-cli"
   cp LICENSE "$app/Contents/Resources/licenses/Attune-LICENSE.txt"
   cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/licenses/"
+  cp THIRD_PARTY_LICENSES.txt "$app/Contents/Resources/licenses/"
+  cp third_party/kindling/THIRD_PARTY_LICENSES.txt "$app/Contents/Resources/licenses/Kindling-THIRD_PARTY_LICENSES.txt"
   cp third_party/kindling/LICENSE "$app/Contents/Resources/licenses/Kindling-LICENSE.txt"
   /usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 13.0' "$app/Contents/Info.plist"
   codesign --force --sign - "$app/Contents/Resources/kindling-cli"

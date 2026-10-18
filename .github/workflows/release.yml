@@ -14,6 +14,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      artifact_version: ${{ steps.version.outputs.artifact_version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       publish: ${{ steps.version.outputs.publish }}
     steps:
       - name: Validate release tag
@@ -26,15 +28,23 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "version=0.0.0" >> "$GITHUB_OUTPUT"
             echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=0.0.0-manual" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ ! "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Release tags must use vMAJOR.MINOR.PATCH (for example v1.2.3)." >&2
+          if [[ ! "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((alpha|beta|rc)(\.(0|[1-9][0-9]*))?))?$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH with an optional alpha, beta, or rc suffix (for example v0.0.1-alpha)." >&2
             exit 1
           fi
           echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
           echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${BASH_REMATCH[4]}" ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
   build:
@@ -165,7 +175,7 @@ jobs:
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: package-${{ matrix.id }}
+          name: package-${{ matrix.id }}-${{ needs.validate.outputs.artifact_version }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
@@ -179,12 +189,22 @@ jobs:
     steps:
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          pattern: package-*
+          pattern: package-*-${{ needs.validate.outputs.artifact_version }}
           merge-multiple: true
           path: dist
       - name: Generate checksums and install notes
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.artifact_version }}
         working-directory: dist
         run: |
+          for file in Attune-*; do
+            case "$file" in
+              *.tar.gz) base=${file%.tar.gz}; suffix=.tar.gz ;;
+              *.zip) base=${file%.zip}; suffix=.zip ;;
+              *) continue ;;
+            esac
+            mv -- "$file" "${base}-${RELEASE_VERSION}${suffix}"
+          done
           sha256sum Attune-* > SHA256SUMS.txt
           cat > INSTALL.txt <<'EOF'
           Attune release packages
@@ -200,7 +220,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
-          printf 'Attune %s\n\nSee INSTALL.txt for platform requirements and support notes.\n' "$RELEASE_TAG" > dist/release-notes.txt
-          gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
-            --verify-tag --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
+          printf 'Attune %s\n\n' "$RELEASE_TAG" > dist/release-notes.txt
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            printf 'This is an early prerelease.\n\n' >> dist/release-notes.txt
+          fi
+          printf 'See INSTALL.txt for platform requirements and support notes.\n' >> dist/release-notes.txt
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
+              --verify-tag --prerelease --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
+          else
+            gh release create "$RELEASE_TAG" dist/Attune-* dist/SHA256SUMS.txt dist/INSTALL.txt \
+              --verify-tag --title "Attune $RELEASE_TAG" --notes-file dist/release-notes.txt
+          fi

@@ -6,6 +6,6 @@
  "frontend:build": "npm run build",
  "frontend:dev:watcher": "npm run dev",
  "frontend:dev:serverUrl": "auto",
- "author": { "name": "Attune contributors" },
- "info": { "companyName": "Attune", "productName": "Attune", "productVersion": "0.1.0", "copyright": "Copyright (c) 2026 Attune contributors", "comments": "Attune your library." }
+ "author": { "name": "kevelopment" },
+ "info": { "companyName": "kevelopment", "productName": "Attune", "productVersion": "0.0.1", "copyright": "Copyright (c) 2026 kevelopment", "comments": "Attune your library." }
 }

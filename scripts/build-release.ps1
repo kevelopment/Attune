@@ -30,6 +30,8 @@ try {
   Copy-Item $helper (Join-Path $stage "kindling-cli.exe")
   Copy-Item (Join-Path $root "LICENSE") (Join-Path $stage "licenses/Attune-LICENSE.txt")
   Copy-Item (Join-Path $root "THIRD_PARTY_NOTICES.md") (Join-Path $stage "licenses")
+  Copy-Item (Join-Path $root "THIRD_PARTY_LICENSES.txt") (Join-Path $stage "licenses")
+  Copy-Item (Join-Path $root "third_party/kindling/THIRD_PARTY_LICENSES.txt") (Join-Path $stage "licenses/Kindling-THIRD_PARTY_LICENSES.txt")
   Copy-Item (Join-Path $root "third_party/kindling/LICENSE") (Join-Path $stage "licenses/Kindling-LICENSE.txt")
   @"
 Attune Windows amd64 (experimental; library features only)
