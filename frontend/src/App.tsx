@@ -3,17 +3,22 @@ import { createPortal } from 'react-dom'
 import {
   BookOpen, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
-  CircleHelp, FolderOpen, Upload, Download, CheckCircle2, LoaderCircle, PanelRightClose,
+  CircleHelp, FolderOpen, Upload, Download, LoaderCircle, PanelRightClose,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
-import type { AppState, Book, BookMetadataEdit, BookPreview, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
+import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
 import { useTextSize, type TextSize } from './appearance'
+import ActivityCenter, { useActivityLog } from './ActivityCenter'
+import type { ActivityEntry } from './ActivityCenter'
+import { InlineBanner, useNotifications } from './Notifications'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
 type Confirmation = { title: string; description: string; confirmLabel: string; action: () => void }
 type EditDraft = { title: string; authors: string; publisher: string; language: string; published: string; subjects: string; series: string; seriesIndex: string; description: string }
 type MenuAnchor = { key: string; left: number; top: number }
+type IntakeRequest = { paths: string[]; names: string[]; device: { id: string; name: string } | null }
+type PasteMenu = { left: number; top: number } | null
 const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1_000).toFixed(0)} KB` : n < 1_000_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${(n / 1_000_000_000).toFixed(1)} GB`
 
 export default function App() {
@@ -35,6 +40,7 @@ export default function App() {
   const [deviceBooksLoading, setDeviceBooksLoading] = useState(false)
   const [deviceBooksError, setDeviceBooksError] = useState('')
   const [deviceSelection, setDeviceSelection] = useState<string[]>([])
+  const [ejectingDevice, setEjectingDevice] = useState<Device | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [previewTarget, setPreviewTarget] = useState<Book | null>(null)
   const [bookPreview, setBookPreview] = useState<BookPreview | null>(null)
@@ -42,23 +48,33 @@ export default function App() {
   const [previewError, setPreviewError] = useState('')
   const [previewChapter, setPreviewChapter] = useState(0)
   const [progress, setProgress] = useState<Progress | null>(null)
-  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
-  const [toast, setToast] = useState<{ text: string; kind?: 'error' } | null>(null)
+  const { notify, dismiss } = useNotifications()
   const [busy, setBusy] = useState(false)
   const [changingLibrary, setChangingLibrary] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editDraft, setEditDraft] = useState<EditDraft>({ title: '', authors: '', publisher: '', language: '', published: '', subjects: '', series: '', seriesIndex: '', description: '' })
   const [activeMenu, setActiveMenu] = useState<MenuAnchor | null>(null)
+  const [intake, setIntake] = useState<IntakeRequest | null>(null)
+  const [pasteMenu, setPasteMenu] = useState<PasteMenu>(null)
+  const { entries, begin, update: updateActivity, remove: removeActivity } = useActivityLog()
   const searchRef = useRef<HTMLInputElement>(null)
   const importGuard = useRef(false)
   const transferGuard = useRef(false)
   const refreshGuard = useRef(false)
   const libraryChangeGuard = useRef(false)
   const busyRef = useRef(false)
-  const importPathsRef = useRef<(paths: string[]) => void>(() => {})
+  const importPathsRef = useRef<(paths: string[], target?: 'library' | 'device') => void>(() => {})
+  const pasteFilesRef = useRef<() => void>(() => {})
+  const importActivityId = useRef<string | null>(null)
+  const transferActivityId = useRef<string | null>(null)
+  const pasteHandledAt = useRef(0)
+  const clipboardReadInFlight = useRef(false)
+  const intakeFlowGuard = useRef(false)
   const deviceRefreshRef = useRef<() => void>(() => {})
   const deviceBooksOwner = useRef<string | null>(null)
+  const hiddenEjectingDevices = useRef(new Set<string>())
+  const ejectingDeviceIDs = useRef(new Set<string>())
   busyRef.current = busy
 
   function navigateTo(nextPage: Page) {
@@ -72,8 +88,13 @@ export default function App() {
   const refresh = useCallback(async (force = false) => {
     if (refreshGuard.current || (importGuard.current && !force)) return
     refreshGuard.current = true
-    try { setState(await bridge.getState()) }
-    catch (e) { setToast({ text: message(e), kind: 'error' }) }
+    try {
+      const next = await bridge.getState()
+      const found = new Set(next.devices.map(device => device.id))
+      for (const id of hiddenEjectingDevices.current) if (!found.has(id)) hiddenEjectingDevices.current.delete(id)
+      setState({ ...next, devices: next.devices.filter(device => !hiddenEjectingDevices.current.has(device.id) && !ejectingDeviceIDs.current.has(device.id)) })
+    }
+    catch (e) { notify({ text: message(e), kind: 'error' }) }
     finally { refreshGuard.current = false }
   }, [])
   useEffect(() => { void refresh() }, [refresh])
@@ -85,17 +106,30 @@ export default function App() {
     const unsub = [bridge.on('transfer:progress', (p: Progress) => {
       const next = progressFromEvent(p)
       setProgress(next)
-      if (next.stage === 'error' || next.stage === 'cancelled' || (next.stage === 'done' && (!next.total || next.current >= next.total))) transferGuard.current = false
-    }), bridge.on('import:progress', (p: ImportProgress) => { if (importGuard.current) setImportProgress(p) }), bridge.on('library:changed', () => void refresh()), bridge.on('devices:changed', () => void refresh())]
+      const id = transferActivityId.current
+      if (id) {
+        const terminal = next.stage === 'error' || next.stage === 'cancelled' || (next.stage === 'done' && next.total > 0 && next.current >= next.total)
+        const status: ActivityEntry['status'] = !terminal ? 'running' : next.stage === 'done' ? 'success' : next.stage === 'cancelled' ? 'cancelled' : 'error'
+        updateActivity(id, { status, current: next.stage === 'done' ? next.current : Math.max(0, next.current - 1), total: next.total, detail: [next.title, next.message || stageName(next.stage)].filter(Boolean).join(' · ') })
+        if (terminal) {
+          transferGuard.current = false
+          if (next.stage === 'done' && next.total > 0 && next.current >= next.total) notify({ text: `${next.title || 'Books'} sent to Kindle`, kind: 'success' })
+          else if (next.stage === 'error' || next.stage === 'cancelled') updateActivity(id, { detail: next.message || stageName(next.stage) })
+        }
+      } else if (next.stage === 'error' || next.stage === 'cancelled' || (next.stage === 'done' && next.total > 0 && next.current >= next.total)) transferGuard.current = false
+    }), bridge.on('import:progress', (p: ImportProgress) => {
+      if (importActivityId.current) updateActivity(importActivityId.current, { status: p.stage === 'error' ? 'error' : 'running', current: p.current, total: p.total, detail: p.message || p.filename })
+    }), bridge.on('library:changed', () => void refresh()), bridge.on('devices:changed', () => void refresh())]
     const nativeDrop = window.runtime?.OnFileDrop
-    const drop = (e: DragEvent) => { e.preventDefault(); setDragging(false); const paths = Array.from(e.dataTransfer?.files ?? []).map((f: any) => f.path).filter(Boolean); if (paths.length) importPathsRef.current(paths) }
+    const targetAt = (x: number, y: number): 'device' | 'library' => document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-drop-target]')?.dataset.dropTarget === 'device' ? 'device' : 'library'
+    const drop = (e: DragEvent) => { e.preventDefault(); setDragging(false); const files = Array.from(e.dataTransfer?.files ?? []); const paths = files.map((f: any) => f.path || (bridge.preview ? `/preview/${f.name}` : '')).filter(Boolean); if (paths.length) importPathsRef.current(paths, targetAt(e.clientX, e.clientY)) }
     const over = (e: DragEvent) => { e.preventDefault(); setDragging(true) }
     const leave = (e: DragEvent) => { if (!e.relatedTarget) setDragging(false) }
-    if (nativeDrop) nativeDrop((_x, _y, paths) => { setDragging(false); importPathsRef.current(paths) }, true)
+    if (nativeDrop) nativeDrop((x, y, paths) => { setDragging(false); if (paths.length) importPathsRef.current(paths, targetAt(x, y)) }, true)
     else { window.addEventListener('drop', drop); window.addEventListener('dragover', over); window.addEventListener('dragleave', leave) }
     return () => { unsub.forEach(fn => typeof fn === 'function' && fn()); if (nativeDrop) window.runtime?.OnFileDropOff?.(); else { window.removeEventListener('drop', drop); window.removeEventListener('dragover', over); window.removeEventListener('dragleave', leave) } }
   }, [refresh])
-  useEffect(() => { if (toast) { const timer = window.setTimeout(() => setToast(null), 5200); return () => clearTimeout(timer) } }, [toast])
+  useEffect(() => { if (progress?.stage === 'done' && progress.total > 0 && progress.current >= progress.total) { const timer = window.setTimeout(() => setProgress(null), 5000); return () => clearTimeout(timer) } }, [progress?.stage, progress?.current, progress?.total])
   useEffect(() => {
     if (!activeMenu) return
     const outside = (event: PointerEvent) => { if (!(event.target as Element | null)?.closest('[data-book-menu]')) setActiveMenu(null) }
@@ -127,7 +161,7 @@ export default function App() {
     return all.filter(b => (!needle || `${b.title} ${b.authors.join(' ')}`.toLowerCase().includes(needle)) && matchesFilter(b.authors, authorFilter) && matchesFilter(b.subjects, genreFilter) && matchesFilter(b.language ? [b.language] : [], languageFilter) && (page !== 'recent' || Date.now() - new Date(b.addedAt).getTime() < 30 * 86400000))
       .sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title) : sort === 'author' ? (a.authors[0] ?? '').localeCompare(b.authors[0] ?? '') : b.addedAt.localeCompare(a.addedAt))
   }, [state?.books, query, page, sort, authorFilter, genreFilter, languageFilter])
-  const device = state?.devices?.[0]
+  const device = state?.devices?.find(item => !hiddenEjectingDevices.current.has(item.id) && !ejectingDeviceIDs.current.has(item.id))
   const isDevice = page === 'device'
   const visibleDeviceBooks = useMemo(() => deviceBooks.filter(book => {
     const needle = query.trim().toLowerCase()
@@ -140,10 +174,12 @@ export default function App() {
       const target = e.target as HTMLElement | null
       const typing = !!target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
       if (confirmation && e.key !== 'Escape') return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && !typing) { e.preventDefault(); pasteFilesRef.current(); return }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRef.current?.focus() }
       if (e.key === 'Escape') {
-        if (activeMenu) { setActiveMenu(null); e.preventDefault(); return }
-        if (confirmation) setConfirmation(null)
+        if (activeMenu || pasteMenu) { setActiveMenu(null); setPasteMenu(null); e.preventDefault(); return }
+        if (intake) setIntake(null)
+        else if (confirmation) setConfirmation(null)
         else if (previewTarget) { setPreviewTarget(null); setBookPreview(null) }
         else { setFocusedBook(null); setFocusedDeviceBook(null); setEditing(false); setSelected([]) }
       }
@@ -153,8 +189,16 @@ export default function App() {
         else if (page === 'library' || page === 'recent') setSelected(books.map(b => b.id))
       }
     }
+    const paste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing = !!target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      if (typing) return
+      event.preventDefault()
+      pasteFilesRef.current()
+    }
     window.addEventListener('keydown', keys)
-    return () => window.removeEventListener('keydown', keys)
+    window.addEventListener('paste', paste)
+    return () => { window.removeEventListener('keydown', keys); window.removeEventListener('paste', paste) }
   }, [page, visibleDeviceBooks, books, confirmation, previewTarget, activeMenu])
 
   useEffect(() => {
@@ -192,42 +236,93 @@ export default function App() {
   async function run(action: () => Promise<any>, success?: (result: any) => void | Promise<void>) {
     setBusy(true)
     try { const result = await action(); await success?.(result); return result }
-    catch (e) { setToast({ text: message(e), kind: 'error' }); return null }
+    catch (e) { notify({ text: message(e), kind: 'error' }); return null }
     finally { setBusy(false) }
   }
-  async function performImport(action: () => Promise<ImportResult>, total = 0, filename = '') {
-    if (importGuard.current) return
+  async function performImport(action: () => Promise<ImportResult>, total = 0, filename = ''): Promise<ImportResult | null> {
+    if (importGuard.current || busy || transferActive || changingLibrary) return null
     importGuard.current = true
     setBusy(true)
-    setImportProgress({ current: 0, total, filename: filename || 'Choose EPUB files…', imported: 0, duplicates: 0, failed: 0, stage: 'importing' })
+    const activityID = begin('import', total > 1 ? `Import ${total} books` : filename ? `Import ${filename}` : 'Import books')
+    importActivityId.current = activityID
     try {
       const result = await action()
-      const errors = result?.errors ?? []
-      const imported = result?.imported ?? 0
-      const duplicates = result?.duplicates ?? 0
-      if (!imported && !duplicates && !errors.length) setImportProgress(null)
-      else setImportProgress(current => ({ current: current?.total ? current.total : current?.current ?? 0, total: current?.total ?? total, filename: current?.filename ?? filename, imported, duplicates, failed: errors.length, stage: 'done', message: errors[0] }))
+      if (!result || (!result.imported && !result.duplicates && !result.errors?.length)) {
+        removeActivity(activityID)
+        return result ?? null
+      }
+      const errors = result.errors ?? []
+      const imported = result.imported ?? 0
+      const duplicates = result.duplicates ?? 0
+      updateActivity(activityID, { status: errors.length ? 'error' : 'success', current: result.imported + result.duplicates + errors.length, total: total || result.imported + result.duplicates + errors.length, detail: errors[0] || `${imported} imported · ${duplicates} duplicates` })
+      if (errors.length) notify({ text: `${imported} imported · ${duplicates} duplicates · ${errors.length} failed: ${errors[0]}`, kind: 'error' })
+      else notify({ text: `${imported} imported · ${duplicates} duplicates`, kind: 'success' })
       await refresh(true)
+      return result
     } catch (e) {
-      setImportProgress(current => ({ current: current?.current ?? 0, total: current?.total ?? total, filename: current?.filename ?? filename, imported: current?.imported ?? 0, duplicates: current?.duplicates ?? 0, failed: current?.failed ?? 0, stage: 'error', message: message(e) }))
+      updateActivity(activityID, { status: 'error', detail: message(e) })
+      notify({ text: message(e), kind: 'error' })
+      return null
     } finally {
+      importActivityId.current = null
       importGuard.current = false
       setBusy(false)
     }
   }
-  async function importPaths(paths: string[]) {
-    if (!paths.length) return
-    await performImport(() => bridge.importPaths(paths), paths.length, paths[0].split(/[\\/]/).pop() ?? '')
+  async function importPaths(paths: string[], target: 'library' | 'device' = 'library') {
+    if (!paths.length || intake || intakeFlowGuard.current || clipboardReadInFlight.current || importGuard.current || busy || transferActive || changingLibrary) return
+    const names = paths.map(path => path.split(/[\\/]/).pop() ?? path)
+    if (target === 'device') setIntake({ paths, names, device: device ? { id: device.id, name: device.name } : null })
+    else await completeIntake({ paths, names, device: null }, false)
   }
-  importPathsRef.current = paths => { void importPaths(paths) }
+  importPathsRef.current = (paths, target) => { void importPaths(paths, target) }
+  async function requestPasteFiles() {
+    if (Date.now() - pasteHandledAt.current < 350 || clipboardReadInFlight.current || intake || intakeFlowGuard.current) return
+    pasteHandledAt.current = Date.now()
+    setPasteMenu(null)
+    if (intakeFlowGuard.current || importGuard.current || busy || transferActive || changingLibrary) { notify({ text: 'Finish the current operation before importing more books.', kind: 'status' }); return }
+    clipboardReadInFlight.current = true
+    try {
+      const paths = await bridge.readClipboardFiles()
+      if (!paths.length) { notify({ text: 'No EPUB files were found on the clipboard.', kind: 'error' }); return }
+      const names = paths.map(path => path.split(/[\\/]/).pop() ?? path)
+      setIntake({ paths, names, device: device ? { id: device.id, name: device.name } : null })
+    } catch (e) { notify({ text: message(e), kind: 'error' }) }
+    finally { clipboardReadInFlight.current = false }
+  }
+  pasteFilesRef.current = () => { void requestPasteFiles() }
+  async function completeIntake(request: IntakeRequest, sendToDevice: boolean) {
+    if (importGuard.current || busy || transferActive || changingLibrary) return
+    const result = await performImport(() => bridge.importPaths(request.paths), request.paths.length, request.names[0] ?? 'Imported books')
+    if (!sendToDevice || !result || !result.bookIDs?.length) return
+    const target = request.device
+    if (!target) { notify({ text: 'No Kindle was connected when you chose to send these books.', kind: 'error' }); return }
+    try {
+      const fresh = await bridge.getState()
+      if (!fresh.devices.some(candidate => candidate.id === target.id)) { notify({ text: `${target.name} disconnected. Your books were imported to the library but were not sent.`, kind: 'error' }); return }
+      intakeFlowGuard.current = false
+      await send(result.bookIDs, target)
+    } catch (e) { notify({ text: message(e), kind: 'error' }) }
+  }
+  async function confirmIntake(choice: 'send' | 'library') {
+    if (!intake) return
+    const request = intake
+    setIntake(null)
+    intakeFlowGuard.current = true
+    try { await completeIntake(request, choice === 'send') }
+    finally { intakeFlowGuard.current = false }
+  }
   async function beginImport() {
-    if (importGuard.current) return
+    if (intakeFlowGuard.current || importGuard.current || busy || transferActive || changingLibrary) return
     if (bridge.preview) await performImport(() => bridge.previewImport(), 18, 'Preparing sample EPUBs…')
     else await performImport(() => bridge.importBooks())
   }
-  async function addDevice() { await run(() => bridge.selectDevice(), async () => { await refresh(); navigateTo('device') }) }
+  async function addDevice() {
+    if (ejectingDeviceIDs.current.size) return
+    await run(() => bridge.selectDevice(), async () => { await refresh(); navigateTo('device') })
+  }
   async function changeLibraryLocation() {
-    if (libraryChangeGuard.current || busy || importGuard.current || transferActive) return
+    if (libraryChangeGuard.current || intakeFlowGuard.current || busy || importGuard.current || transferActive) return
     libraryChangeGuard.current = true
     setChangingLibrary(true)
     try {
@@ -242,7 +337,7 @@ export default function App() {
         setPreviewTarget(null)
         setBookPreview(null)
         await refresh(true)
-        setToast({ text: 'Library location updated. The original copy is still in its previous folder.' })
+        notify({ text: 'Library location updated. The original copy is still in its previous folder.', kind: 'success' })
       })
     } finally {
       libraryChangeGuard.current = false
@@ -275,29 +370,69 @@ export default function App() {
     await run(() => bridge.updateBookMetadata(focusedBook.id, edit), async (book: Book) => { setEditing(false); setFocusedBook(book); await refresh() })
   }
   async function deleteLocal(book: Book) {
-    setConfirmation({ title: 'Remove from library?', description: `“${book.title}” will be removed from your library. Any copy already on a Kindle will stay there.`, confirmLabel: 'Remove from library', action: () => { void run(() => bridge.deleteBook(book.id), async () => { setSelected(s => s.filter(id => id !== book.id)); setFocusedBook(null); await refresh(); setToast({ text: 'Book removed from your library' }) }) } })
+    setConfirmation({ title: 'Remove from library?', description: `“${book.title}” will be removed from your library. Any copy already on a Kindle will stay there.`, confirmLabel: 'Remove from library', action: () => { void run(() => bridge.deleteBook(book.id), async () => { setSelected(s => s.filter(id => id !== book.id)); setFocusedBook(null); await refresh(); notify({ text: 'Book removed from your library', kind: 'success' }) }) } })
   }
   async function deleteSelected() {
     const targets = (state?.books ?? []).filter(b => selected.includes(b.id))
     if (!targets.length) return
-    setConfirmation({ title: `Remove ${targets.length} ${targets.length === 1 ? 'book' : 'books'} from library?`, description: 'Any copies already on a Kindle will stay there.', confirmLabel: 'Remove from library', action: () => { void run(async () => { for (const book of targets) await bridge.deleteBook(book.id) }, async () => { setSelected([]); await refresh(); setToast({ text: `${targets.length} ${targets.length === 1 ? 'book' : 'books'} removed from your library` }) }) } })
+    setConfirmation({ title: `Remove ${targets.length} ${targets.length === 1 ? 'book' : 'books'} from library?`, description: 'Any copies already on a Kindle will stay there.', confirmLabel: 'Remove from library', action: () => { void run(async () => { for (const book of targets) await bridge.deleteBook(book.id) }, async () => { setSelected([]); await refresh(); notify({ text: `${targets.length} ${targets.length === 1 ? 'book' : 'books'} removed from your library`, kind: 'success' }) }) } })
   }
-  async function send(ids: string[]) {
-    if (transferActive) { setToast({ text: 'Wait for the current Kindle transfer to finish before starting another.' }); return }
-    if (!device) { setToast({ text: 'Connect a Kindle first, then choose it in Devices.', kind: 'error' }); return }
+  async function send(ids: string[], target: { id: string; name: string } | null = device ? { id: device.id, name: device.name } : null) {
+    if (!ids.length) return
+    if (intakeFlowGuard.current || transferActive) { notify({ text: 'Wait for the current operation to finish before starting another.', kind: 'status' }); return }
+    if (!target) { notify({ text: 'Connect a Kindle first, then choose it in Devices.', kind: 'error' }); return }
     transferGuard.current = true
-    setProgress({ id: 'starting', bookID: '', title: ids.length === 1 ? books.find(b => b.id === ids[0])?.title ?? 'Books' : `${ids.length} books`, stage: 'queued', message: 'Preparing transfer', current: 0, total: ids.length })
-    const ok = await run(() => bridge.sendBooks(device.id, ids), () => setSelected([]))
-    if (ok === null) { transferGuard.current = false; setProgress(p => p ? { ...p, stage: 'error', message: 'Could not start transfer. Check the Kindle connection and try again.' } : null) }
+    const title = ids.length === 1 ? (state?.books ?? []).find(b => b.id === ids[0])?.title ?? 'Book' : `${ids.length} books`
+    transferActivityId.current = begin('transfer', `Send ${title} to ${target.name}`)
+    updateActivity(transferActivityId.current, { status: 'running', current: 0, total: ids.length, detail: 'Preparing transfer' })
+    setProgress({ id: 'starting', bookID: '', title, stage: 'queued', message: 'Preparing transfer', current: 0, total: ids.length })
+    const ok = await run(() => bridge.sendBooks(target.id, ids), () => setSelected([]))
+    if (ok === null) {
+      transferGuard.current = false
+      if (transferActivityId.current) updateActivity(transferActivityId.current, { status: 'error', detail: 'Could not start transfer. Check the Kindle connection and try again.' })
+      setProgress(p => p ? { ...p, stage: 'error', message: 'Could not start transfer. Check the Kindle connection and try again.' } : null)
+    }
   }
   function eject() {
     if (!device) return
-    setConfirmation({ title: 'Eject Kindle?', description: 'Finish writing to the device and disconnect it safely.', confirmLabel: 'Eject Kindle', action: () => { void run(() => bridge.ejectDevice(device.id), async () => { setToast({ text: 'Kindle ejected safely' }); await refresh() }) } })
+    const target = device
+    setConfirmation({ title: 'Eject Kindle?', description: 'Finish writing to the device and disconnect it safely.', confirmLabel: 'Eject Kindle', action: () => {
+      if (ejectingDeviceIDs.current.has(target.id)) return
+      hiddenEjectingDevices.current.add(target.id)
+      ejectingDeviceIDs.current.add(target.id)
+      setEjectingDevice(target)
+      dismiss()
+      setFocusedDeviceBook(null)
+      setActiveMenu(null)
+      setState(current => current ? { ...current, devices: current.devices.filter(item => item.id !== target.id) } : current)
+      const activityID = begin('eject', `Eject ${target.name}`)
+      updateActivity(activityID, { detail: 'Waiting for the device to finish disconnecting safely' })
+      void (async () => {
+        setBusy(true)
+        try {
+          await bridge.ejectDevice(target.id)
+          updateActivity(activityID, { status: 'success', detail: 'Device disconnected safely' })
+          notify({ text: 'Kindle ejected safely', kind: 'success' })
+          await refresh()
+        } catch (e) {
+          hiddenEjectingDevices.current.delete(target.id)
+          ejectingDeviceIDs.current.delete(target.id)
+          updateActivity(activityID, { status: 'error', detail: message(e) })
+          setState(current => current && !current.devices.some(item => item.id === target.id) ? { ...current, devices: [...current.devices, target] } : current)
+          notify({ text: message(e), kind: 'error' })
+          await refresh(true)
+        } finally {
+          ejectingDeviceIDs.current.delete(target.id)
+          setEjectingDevice(null)
+          setBusy(false)
+        }
+      })()
+    } })
   }
   function confirmRemoveFromDevice(paths: string[]) {
     if (!device || !paths.length) return
     const single = paths.length === 1
-    setConfirmation({ title: `Remove ${paths.length} ${single ? 'book' : 'books'} from Kindle?`, description: 'Your library copies will stay on this Mac.', confirmLabel: 'Remove from Kindle', action: () => { void run(() => bridge.removeDeviceBooks(device.id, paths), async () => { setDeviceSelection(s => s.filter(path => !paths.includes(path))); setDeviceBooks(await bridge.getDeviceBooks(device.id)); setToast({ text: `${single ? 'Book' : 'Books'} removed from Kindle` }) }) } })
+    setConfirmation({ title: `Remove ${paths.length} ${single ? 'book' : 'books'} from Kindle?`, description: 'Your library copies will stay on this Mac.', confirmLabel: 'Remove from Kindle', action: () => { void run(() => bridge.removeDeviceBooks(device.id, paths), async () => { setDeviceSelection(s => s.filter(path => !paths.includes(path))); setDeviceBooks(await bridge.getDeviceBooks(device.id)); notify({ text: `${single ? 'Book' : 'Books'} removed from Kindle`, kind: 'success' }) }) } })
   }
   function removeFromDevice() { confirmRemoveFromDevice([...deviceSelection]) }
   function toggle(id: string, e?: React.MouseEvent) { setSelected(s => s.includes(id) ? s.filter(x => x !== id) : e?.shiftKey ? [...s, id] : [...s, id]) }
@@ -316,29 +451,30 @@ export default function App() {
   return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
       <nav className="rail-nav" aria-label="Library sections">
-        <button className={`rail-item ${page === 'library' ? 'active' : ''}`} title="All books" aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><BookOpen/></button>
-        <button className={`rail-item ${page === 'recent' ? 'active' : ''}`} title="Recently added" aria-label="Recently added" aria-current={page === 'recent' ? 'page' : undefined} onClick={() => navigateTo('recent')}><Clock3/></button>
-        <button className={`rail-item ${page === 'device' ? 'active' : ''}`} title={device?.name ?? 'Add a Kindle'} aria-label={device?.name ?? 'Add a Kindle'} aria-current={page === 'device' ? 'page' : undefined} onClick={() => device ? navigateTo('device') : void addDevice()}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
+        <button className={`rail-item ${page === 'library' ? 'active' : ''}`} aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><BookOpen/></button>
+        <button className={`rail-item ${page === 'recent' ? 'active' : ''}`} aria-label="Recently added" aria-current={page === 'recent' ? 'page' : undefined} onClick={() => navigateTo('recent')}><Clock3/></button>
+        <button className={`rail-item ${page === 'device' ? 'active' : ''}`} data-drop-target={device ? 'device' : 'library'} aria-label="Reader" aria-current={page === 'device' ? 'page' : undefined} onClick={() => navigateTo('device')}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
       </nav>
       <div className="rail-spacer"/>
-      {state?.updateAvailable === true && <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} title="Update available" aria-label="Update available" aria-current={page === 'updates' ? 'page' : undefined} onClick={() => navigateTo('updates')}><Download/></button>}
-      <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} title="Settings" aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigateTo('settings')}><Settings2/></button>
+      {state?.updateAvailable === true && <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} aria-label="Update available" aria-current={page === 'updates' ? 'page' : undefined} onClick={() => navigateTo('updates')}><Download/></button>}
+      <button className={`rail-item rail-settings ${page === 'settings' ? 'active' : ''}`} aria-label="Settings" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigateTo('settings')}><Settings2/></button>
     </aside>
 
-    <header className="topbar">
+    <header className="topbar" data-drop-target={isDevice ? 'device' : 'library'}>
       <div className="topbar-navigation" aria-label="Navigation history">
         <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
         <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
       </div>
-      <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? (device ? 'On your Kindle' : 'Kindle disconnected') : page === 'settings' ? 'Settings' : 'Updates'}</h1>
+      <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>
+      <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
       <div className="top-actions">
         {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ F</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
         {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
-        {page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy}><Plus size={17}/><span>Import books</span></button>}
+        {page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy || transferActive}><Plus size={17}/><span>Import books</span></button>}
       </div>
     </header>
 
-    <main className="main-panel">
+    <main className="main-panel" data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (page !== 'library' && page !== 'recent' && page !== 'device') return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
       {page === 'settings' ? <Settings textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
@@ -358,9 +494,9 @@ export default function App() {
           </div>
           {(authorFilter || genreFilter || languageFilter) && <div className="applied-filter-tags" aria-label="Applied filters">{authorFilter && <FilterTag label="Author" value={authorFilter === unknownFilter ? 'Unknown' : authorFilter} onRemove={() => setAuthorFilter('')}/ >}{genreFilter && <FilterTag label="Genre" value={genreFilter === unknownFilter ? 'Unknown' : genreFilter} onRemove={() => setGenreFilter('')}/ >}{languageFilter && <FilterTag label="Language" value={languageFilter === unknownFilter ? 'Unknown' : languageLabel(languageFilter)} onRemove={() => setLanguageFilter('')}/ >}<button className="clear-filters" onClick={() => { setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}>Clear all</button></div>}
         </section>
-        <div className={`book-area ${dragging ? 'dragging' : ''}`}>
+        <div className={`book-area ${dragging ? 'dragging' : ''}`} data-drop-target={isDevice ? 'device' : 'library'}>
           {dragging && <div className="drop-overlay"><div><Upload size={27}/><b>Drop EPUBs to add them</b><span>Your originals stay untouched</span></div></div>}
-          {isDevice ? device ? <DeviceList deviceBooks={visibleDeviceBooks} layout={layout} hasBooks={deviceBooks.length > 0} searching={!!query.trim() || hasFilters} loading={deviceBooksLoading} error={deviceBooksError} selection={deviceSelection} setSelection={setDeviceSelection} onClearSearch={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }} onRefresh={() => deviceRefreshRef.current()} onOpen={openDeviceDetails} menu={activeMenu} onMenu={(key, button) => toggleMenu(key, button)} onMenuClose={() => setActiveMenu(null)} onPreview={previewDeviceBook} onRemove={path => { setActiveMenu(null); confirmRemoveFromDevice([path]) }}/> : <DeviceDisconnected onConnect={() => void addDevice()}/> : books.length ? <div className={`book-collection ${layout === 'list' ? 'list-layout' : ''}`}>
+          {isDevice ? device ? <DeviceList deviceBooks={visibleDeviceBooks} layout={layout} hasBooks={deviceBooks.length > 0} searching={!!query.trim() || hasFilters} loading={deviceBooksLoading} error={deviceBooksError} selection={deviceSelection} setSelection={setDeviceSelection} onClearSearch={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }} onRefresh={() => deviceRefreshRef.current()} onOpen={openDeviceDetails} menu={activeMenu} onMenu={(key, button) => toggleMenu(key, button)} onMenuClose={() => setActiveMenu(null)} onPreview={previewDeviceBook} onRemove={path => { setActiveMenu(null); confirmRemoveFromDevice([path]) }}/> : <DeviceDisconnected ejecting={!!ejectingDevice} onConnect={() => void addDevice()}/> : books.length ? <div className={`book-collection ${layout === 'list' ? 'list-layout' : ''}`}>
             {books.map(book => <BookTile key={book.id} book={book} layout={layout} selected={selected.includes(book.id)} menu={activeMenu?.key === `book:${book.id}` ? activeMenu : null} onMenu={button => toggleMenu(`book:${book.id}`, button)} onMenuClose={() => setActiveMenu(null)} canSend={!!device && !transferActive} sendLabel={device ? `Send to ${device.name}` : 'Connect a Kindle to send'} onPreview={() => { setActiveMenu(null); void openPreview(book) }} onEdit={() => { setActiveMenu(null); void startEdit(book) }} onSend={() => { setActiveMenu(null); void send([book.id]) }} onDelete={() => { setActiveMenu(null); void deleteLocal(book) }} onToggle={e => toggle(book.id, e)} onOpen={() => { setFocusedDeviceBook(null); setFocusedBook(book); setEditing(false) }}/>) }
           </div> : <EmptyState recent={page === 'recent'} searching={!!query || hasFilters} onImport={() => void beginImport()} onClear={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}/ >}
         </div>
@@ -369,9 +505,8 @@ export default function App() {
     {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)}/></div>}
     {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
     {previewTarget && <BookPreviewDialog book={bookPreview?.book ?? previewTarget} preview={bookPreview} loading={previewLoading} error={previewError} chapterIndex={previewChapter} setChapterIndex={setPreviewChapter} onClose={() => { setPreviewTarget(null); setBookPreview(null) }}/>}
-    {progress && <TransferToast progress={progress} onCancel={() => void run(() => bridge.cancelTransfer(), () => setProgress(p => p ? { ...p, message: 'Cancellation requested…' } : p))} onClose={() => setProgress(null)}/>}
-    {importProgress && <ImportStatus progress={importProgress} onClose={() => setImportProgress(null)}/>}
-    {toast && <div className={`toast ${toast.kind === 'error' ? 'toast-error' : ''}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.kind === 'error' ? <AlertCircle size={17}/> : <CheckCircle2 size={17}/>}<span>{toast.text}</span><button onClick={() => setToast(null)} aria-label="Dismiss message"><X size={15}/></button></div>}
+    {pasteMenu && <div className="book-context-menu paste-context-menu" style={{ left: pasteMenu.left, top: pasteMenu.top }} role="menu" onContextMenu={e => e.preventDefault()}><button role="menuitem" onClick={() => { setPasteMenu(null); pasteFilesRef.current() }}><span className="menu-item-icon"><Upload size={16}/></span>Paste books <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘V' : 'Ctrl+V'}</kbd></button></div>}
+    {intake && <IntakeDialog request={intake} onCancel={() => setIntake(null)} onImportOnly={() => void confirmIntake('library')} onSend={() => void confirmIntake('send')}/>}
     {confirmation && <ConfirmDialog confirmation={confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const action = confirmation.action; setConfirmation(null); action() }}/>}
   </div>
 }
@@ -462,14 +597,14 @@ function BookPreviewDialog({ book, preview, loading, error, chapterIndex, setCha
 }
 function escapeHTML(value: string) { return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!) ) }
 
-function DeviceDisconnected({ onConnect }: { onConnect: () => void }) {
-  return <div className="empty-device"><div className="empty-art"><HardDrive size={35}/><span>×</span></div><h2>Kindle disconnected</h2><p>Reconnect your Kindle, then add it here to browse or manage its books.</p><button className="toolbar-button" onClick={onConnect}><Plus size={16}/> Connect a Kindle</button></div>
+function DeviceDisconnected({ ejecting, onConnect }: { ejecting: boolean; onConnect: () => void }) {
+  return <div className="empty-device"><div className="empty-art">{ejecting ? <LoaderCircle className="spinning" size={32}/> : <><HardDrive size={35}/><span>×</span></>}</div><h2>{ejecting ? 'Ejecting Kindle…' : 'No reader connected'}</h2><p>{ejecting ? 'Wait while the Kindle disconnects safely.' : 'Connect a reader to browse or manage its books.'}</p>{!ejecting && <button className="toolbar-button" onClick={onConnect}><Plus size={16}/> Add device</button>}</div>
 }
 
 function DeviceList({ deviceBooks, layout, hasBooks, searching, loading, error, selection, setSelection, onClearSearch, onRefresh, onOpen, menu, onMenu, onMenuClose, onPreview, onRemove }: { deviceBooks: DeviceBook[]; layout: 'grid' | 'list'; hasBooks: boolean; searching: boolean; loading: boolean; error: string; selection: string[]; setSelection: React.Dispatch<React.SetStateAction<string[]>>; onClearSearch: () => void; onRefresh: () => void; onOpen: (book: DeviceBook) => void; menu: MenuAnchor | null; onMenu: (key: string, button: HTMLButtonElement) => void; onMenuClose: () => void; onPreview: (bookID: string) => void; onRemove: (path: string) => void }) {
   if (!deviceBooks.length && loading) return <div className="empty-device" role="status" aria-live="polite"><div className="empty-art"><LoaderCircle className="spinning" size={32}/></div><h2>Reading Kindle contents…</h2><p>Looking for books on the connected device.</p></div>
   if (!deviceBooks.length && !hasBooks && error) return <div className="empty-device"><div className="empty-art"><AlertCircle size={32}/></div><h2>Couldn’t read Kindle contents</h2><p>{error}</p><button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Try again</button></div>
-  return <>{error && <div className="device-load-error" role="status"><AlertCircle size={15}/><span>Couldn’t refresh Kindle contents. Showing the last loaded books.</span><button className="quiet-button" onClick={onRefresh}>Try again</button></div>}{!deviceBooks.length ? <div className="empty-device"><div className="empty-art"><HardDrive size={35}/><span>· · ·</span></div><h2>{searching && hasBooks ? 'No Kindle books match these filters' : 'No books found on this Kindle'}</h2><p>{searching && hasBooks ? 'Try another search or clear your filters.' : 'Books in the device’s documents folder will appear here.'}</p>{searching && hasBooks ? <button className="quiet-button" onClick={onClearSearch}>Clear filters</button> : <button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Refresh device</button>}</div> : layout === 'grid' ? <div className="book-collection device-collection">{deviceBooks.map(book => <DeviceTile key={book.path} book={book} selected={selection.includes(book.path)} menu={menu?.key === `device:${book.path}` ? menu : null} onMenu={button => onMenu(`device:${book.path}`, button)} onMenuClose={onMenuClose} onPreview={() => onPreview(book.bookID)} onRemove={() => onRemove(book.path)} onToggle={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} onOpen={() => onOpen(book)}/>)}</div> : <div className="device-list" role="list">
+  return <>{error && <InlineBanner className="device-load-error" action={<button className="quiet-button" onClick={onRefresh}>Try again</button>}>Couldn’t refresh Kindle contents. Showing the last loaded books.</InlineBanner>}{!deviceBooks.length ? <div className="empty-device"><div className="empty-art"><HardDrive size={35}/><span>· · ·</span></div><h2>{searching && hasBooks ? 'No Kindle books match these filters' : 'No books found on this Kindle'}</h2><p>{searching && hasBooks ? 'Try another search or clear your filters.' : 'Books in the device’s documents folder will appear here.'}</p>{searching && hasBooks ? <button className="quiet-button" onClick={onClearSearch}>Clear filters</button> : <button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Refresh device</button>}</div> : layout === 'grid' ? <div className="book-collection device-collection">{deviceBooks.map(book => <DeviceTile key={book.path} book={book} selected={selection.includes(book.path)} menu={menu?.key === `device:${book.path}` ? menu : null} onMenu={button => onMenu(`device:${book.path}`, button)} onMenuClose={onMenuClose} onPreview={() => onPreview(book.bookID)} onRemove={() => onRemove(book.path)} onToggle={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} onOpen={() => onOpen(book)}/>)}</div> : <div className="device-list" role="list">
     {deviceBooks.map(book => <div role="listitem" className={`device-book ${selection.includes(book.path) ? 'row-selected' : ''}`} key={book.path}>
       <button className={`device-check ${selection.includes(book.path) ? 'checked' : ''}`} onClick={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} aria-label={`Select ${book.title || fileTitle(book.name)}`} aria-pressed={selection.includes(book.path)}>{selection.includes(book.path) && <Check size={13}/>}</button>
       <div className="device-book-icon"><BookOpen size={17}/></div><div className="device-book-copy"><button onClick={() => onOpen(book)}>{book.title || fileTitle(book.name)}</button><span>{extensionFromPath(book.path)} · {fmtBytes(book.size)}</span></div><span className="device-book-status">On Kindle</span><div className="book-menu-anchor" data-book-menu><button className="tile-more" aria-label={`Actions for ${book.title || fileTitle(book.name)}`} aria-haspopup="menu" aria-expanded={menu?.key === `device:${book.path}`} onClick={e => { e.stopPropagation(); onMenu(`device:${book.path}`, e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
@@ -576,25 +711,30 @@ function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave,
   </aside>
 }
 
-function TransferToast({ progress, onCancel, onClose }: { progress: Progress; onCancel: () => void; onClose: () => void }) {
-  const done = progress.stage === 'done' && (!progress.total || progress.current >= progress.total)
-  const terminal = done || ['error', 'cancelled'].includes(progress.stage)
-  return <div className={`transfer-toast ${progress.stage === 'error' ? 'transfer-error' : ''}`} role="status"><div className="transfer-icon">{done ? <CheckCircle2 size={19}/> : progress.stage === 'error' ? <AlertCircle size={19}/> : progress.stage === 'cancelled' ? <X size={19}/> : <LoaderCircle className="spinning" size={19}/>}</div><div className="transfer-copy"><div className="transfer-title">{done ? 'Transfer complete' : progress.stage === 'error' ? 'Transfer needs attention' : progress.stage === 'cancelled' ? 'Transfer cancelled' : progress.title || 'Sending books to Kindle'}</div><div className="transfer-subtitle">{progress.message || stageName(progress.stage)}</div><div className="progress-track"><span style={{ width: `${Math.max(2, Math.min(100, progress.total ? progress.current / progress.total * 100 : 9))}%` }}/></div></div>{terminal ? <button className="icon-button" onClick={onClose} aria-label="Close transfer status"><X size={16}/></button> : <button className="quiet-button cancel-transfer" onClick={onCancel}>Cancel</button>}</div>
+function IntakeDialog({ request, onCancel, onImportOnly, onSend }: { request: IntakeRequest; onCancel: () => void; onImportOnly: () => void; onSend: () => void }) {
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => { cancelRef.current?.focus() }, [])
+  const summary = request.names.slice(0, 4).join(', ')
+  function trapFocus(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); return }
+    if (e.key !== 'Tab') return
+    const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')
+    if (e.shiftKey && document.activeElement === buttons[0]) { e.preventDefault(); buttons[buttons.length - 1]?.focus() }
+    else if (!e.shiftKey && document.activeElement === buttons[buttons.length - 1]) { e.preventDefault(); buttons[0]?.focus() }
+  }
+  return <div className="confirm-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onCancel() }}>
+    <section className="confirm-dialog intake-dialog" role="dialog" aria-modal="true" aria-labelledby="intake-title" aria-describedby="intake-description" onKeyDown={trapFocus}>
+      <h2 id="intake-title">Import {request.names.length} {request.names.length === 1 ? 'book' : 'books'}?</h2>
+      <p id="intake-description">{summary}{request.names.length > 4 ? ` and ${request.names.length - 4} more` : ''}</p>
+      <div className="confirm-actions intake-actions">
+        <button ref={cancelRef} className="toolbar-button" onClick={onCancel}>Cancel</button>
+        <button className="toolbar-button" onClick={onImportOnly}>Import to library only</button>
+        {request.device && <button className="toolbar-button primary-button" onClick={onSend}>Import and send to {request.device.name}</button>}
+      </div>
+    </section>
+  </div>
 }
-function ImportStatus({ progress, onClose }: { progress: ImportProgress; onClose: () => void }) {
-  const final = progress.stage !== 'importing'
-  const percent = progress.total ? Math.min(100, Math.round(progress.current / progress.total * 100)) : 0
-  const summary = `${progress.imported} imported · ${progress.duplicates} duplicate${progress.duplicates === 1 ? '' : 's'} · ${progress.failed} failed`
-  return <section className={`import-status ${progress.stage === 'error' ? 'import-status-error' : ''}`} role="status" aria-live="polite" aria-atomic="false">
-    <div className="import-status-icon">{progress.stage === 'error' ? <AlertCircle size={18}/> : final ? <CheckCircle2 size={18}/> : <LoaderCircle size={18} className="spinning"/>}</div>
-    <div className="import-status-body">
-      <div className="import-status-heading"><strong>{progress.stage === 'error' ? 'Import stopped' : final ? 'Import complete' : progress.total ? `Importing books · ${progress.current} of ${progress.total} complete` : 'Choose EPUBs to import'}</strong>{final && <button className="icon-button" onClick={onClose} aria-label="Dismiss import summary"><X size={16}/></button>}</div>
-      <div className="import-filename" title={progress.message || progress.filename}>{progress.message || progress.filename}</div>
-      {progress.total > 0 && <div className="progress-track" role="progressbar" aria-label="Import progress" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={Math.min(progress.current, progress.total)}><span style={{ width: `${percent}%` }}/></div>}
-      <div className="import-counts">{summary}</div>
-    </div>
-  </section>
-}
+
 function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Confirmation; onCancel: () => void; onConfirm: () => void }) {
   const cancelRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { cancelRef.current?.focus() }, [])

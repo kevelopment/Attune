@@ -1,10 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <rect x="52" y="52" width="920" height="920" rx="214" fill="#292A2D"/>
-  <path fill="#F5F0E6" d="M512 218c16 68 72 99 91 165 17-23 21-54 13-81 88 83 120 160 100 242-24 93-101 150-204 150-110 0-184-73-184-167 0-63 33-126 88-175-11 60 3 97 32 117-14-94 40-150 64-251Z"/>
-  <path fill="#292A2D" d="M512 643C487 624 456 617 419 624V497C456 489 487 496 512 517C537 496 568 489 605 497V624C568 617 537 624 512 643Z"/>
-  <path stroke="#F5F0E6" stroke-width="16" stroke-linecap="round" d="M512 519v112"/>
-  <g stroke="#F5F0E6" stroke-width="36" stroke-linecap="round">
-    <path d="m328 738 368 92"/>
-    <path d="m696 738-368 92"/>
+  <g transform="translate(-10 30) translate(522 456) scale(1.33) translate(-522 -456)">
+    <path fill="#F5F0E6" d="M512 218c16 68 72 99 91 165 17-23 21-54 13-81 88 83 120 160 100 242-24 93-101 150-204 150-110 0-184-73-184-167 0-63 33-126 88-175-11 60 3 97 32 117-14-94 40-150 64-251Z"/>
+    <path fill="#292A2D" d="M512 643C486 624 456 617 420 624V498C454 491 485 496 512 517C539 496 570 491 603 499V624C568 617 538 624 512 643Z"/>
+    <path stroke="#F5F0E6" stroke-width="16" stroke-linecap="round" d="M512 519v112"/>
   </g>
 </svg>

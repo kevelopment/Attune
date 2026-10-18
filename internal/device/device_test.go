@@ -47,6 +47,22 @@ func TestSelectAndDiscoverRequireMountedExternalVolume(t *testing.T) {
 	}
 }
 
+func TestMissingDeviceRootReturnsDisconnectedError(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Kindle")
+	m := testManager(root, "usb-1", 100)
+	want := "Kindle disconnected; reconnect it and try again"
+
+	if _, err := m.SelectVolume(root); err == nil || err.Error() != want {
+		t.Fatalf("SelectVolume error = %v, want %q", err, want)
+	}
+	if _, err := m.selectExpected(selected(root, "usb-1")); err == nil || err.Error() != want {
+		t.Fatalf("selectExpected error = %v, want %q", err, want)
+	}
+	if _, err := m.findVolume(root); err == nil || err.Error() != want {
+		t.Fatalf("findVolume error = %v, want %q", err, want)
+	}
+}
+
 func TestSendCopiesVerifiesAndRefusesOverwrite(t *testing.T) {
 	root := t.TempDir()
 	docs := filepath.Join(root, "documents")

@@ -98,6 +98,7 @@ type Progress struct {
 type ImportResult struct {
 	Imported   int      `json:"imported"`
 	Duplicates int      `json:"duplicates"`
+	BookIDs    []string `json:"bookIDs"`
 	Errors     []string `json:"errors"`
 }
 

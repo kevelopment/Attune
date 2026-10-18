@@ -368,8 +368,12 @@ func TestImportProgressEventsReportEachFileAndFinalCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := a.ImportPaths([]string{first, duplicate, bad})
-	if err != nil || result.Imported != 1 || result.Duplicates != 1 || len(result.Errors) != 1 {
+	if err != nil || result.Imported != 1 || result.Duplicates != 1 || len(result.BookIDs) != 1 || len(result.Errors) != 1 {
 		t.Fatalf("import result = %#v, %v", result, err)
+	}
+	books, listErr := a.store.ListBooks()
+	if listErr != nil || len(books) != 1 || result.BookIDs[0] != books[0].ID {
+		t.Fatalf("import book IDs = %#v, books = %#v, err = %v", result.BookIDs, books, listErr)
 	}
 	if len(events) != 7 {
 		t.Fatalf("got %d progress events, want 7: %#v", len(events), events)
@@ -391,6 +395,52 @@ func TestImportProgressEventsReportEachFileAndFinalCounts(t *testing.T) {
 		if got.Current != expected.current || got.Total != 3 || got.Imported != expected.imported || got.Duplicates != expected.duplicates || got.Failed != expected.failed || got.Filename != expected.filename || got.Stage != expected.stage {
 			t.Errorf("progress[%d] = %#v, want %+v", i, got, expected)
 		}
+	}
+}
+
+func TestImportPathsReturnsUniqueBookIDsInInputOrder(t *testing.T) {
+	a := testApp(t)
+	defer a.store.Close()
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.epub")
+	second := filepath.Join(dir, "second.epub")
+	firstCopy := filepath.Join(dir, "first-copy.epub")
+	bad := filepath.Join(dir, "bad.epub")
+	secondCopy := filepath.Join(dir, "second-copy.epub")
+	writeTestEPUB(t, first, "First")
+	writeTestEPUB(t, second, "Second")
+	content, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(firstCopy, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(bad, []byte("not an EPUB"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content, err = os.ReadFile(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(secondCopy, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.ImportPaths([]string{first, second, firstCopy, bad, secondCopy})
+	if err != nil || result.Imported != 2 || result.Duplicates != 2 || len(result.Errors) != 1 || len(result.BookIDs) != 2 {
+		t.Fatalf("import result = %#v, %v", result, err)
+	}
+	books, err := a.store.ListBooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idByTitle := make(map[string]string, len(books))
+	for _, book := range books {
+		idByTitle[book.Title] = book.ID
+	}
+	if result.BookIDs[0] != idByTitle["First"] || result.BookIDs[1] != idByTitle["Second"] {
+		t.Fatalf("book IDs = %#v, want first then second: %#v", result.BookIDs, idByTitle)
 	}
 }
 

@@ -81,6 +81,9 @@ func (m *Manager) SelectVolume(root string) (model.Device, error) {
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return model.Device{}, errors.New("Kindle disconnected; reconnect it and try again")
+		}
 		return model.Device{}, fmt.Errorf("resolve selected volume: %w", err)
 	}
 	vols, err := m.volumes()
@@ -438,6 +441,9 @@ func (m *Manager) findVolume(root string) (volume, error) {
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return volume{}, errors.New("Kindle disconnected; reconnect it and try again")
+		}
 		return volume{}, err
 	}
 	for _, v := range vols {

@@ -237,8 +237,12 @@ func (a *App) ImportBooks() (model.ImportResult, error) {
 	return a.ImportPaths(paths)
 }
 
+// ReadClipboardFiles exposes copied local file paths through the Wails-bound
+// App instance. The platform helper only reads file references from clipboard.
+func (a *App) ReadClipboardFiles() ([]string, error) { return ReadClipboardFiles() }
+
 func (a *App) ImportPaths(paths []string) (model.ImportResult, error) {
-	result := model.ImportResult{Errors: []string{}}
+	result := model.ImportResult{BookIDs: []string{}, Errors: []string{}}
 	total := len(paths)
 	emitProgress := func(p model.ImportProgress) {
 		a.event("import:progress", p)
@@ -267,17 +271,24 @@ func (a *App) ImportPaths(paths []string) (model.ImportResult, error) {
 		return result, errors.New("import up to 500 books at a time")
 	}
 	failed := 0
+	seenBookIDs := make(map[string]struct{}, len(paths))
 	for i, p := range paths {
 		filename := filepath.Base(p)
 		emitProgress(model.ImportProgress{Current: i, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Stage: "importing"})
-		_, duplicate, err := a.store.ImportEPUB(p)
+		book, duplicate, err := a.store.ImportEPUB(p)
 		if err != nil {
 			result.Errors = append(result.Errors, filepath.Base(p)+": "+err.Error())
 			failed++
-		} else if duplicate {
-			result.Duplicates++
 		} else {
-			result.Imported++
+			if _, seen := seenBookIDs[book.ID]; !seen {
+				result.BookIDs = append(result.BookIDs, book.ID)
+				seenBookIDs[book.ID] = struct{}{}
+			}
+			if duplicate {
+				result.Duplicates++
+			} else {
+				result.Imported++
+			}
 		}
 		emitProgress(model.ImportProgress{Current: i + 1, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Stage: "importing"})
 	}

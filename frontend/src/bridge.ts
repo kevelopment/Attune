@@ -1,6 +1,9 @@
 import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress } from './types'
 
 const isPreview = new URLSearchParams(location.search).has('preview')
+const previewStateError = new URLSearchParams(location.search).get('state') === 'error'
+const previewEjectFails = new URLSearchParams(location.search).get('eject') === 'fail'
+const previewEjectDelay = new URLSearchParams(location.search).get('eject') === 'slow' ? 8000 : 1400
 const coverColors = ['#797a66', '#577067', '#bb7b55', '#586987', '#986b7b', '#8d7258']
 const sampleTitles = ['The Silent Library', 'A Field Guide to Elsewhere', 'Light Between Worlds', 'Small Hours', 'The Art of Getting Lost', 'A Map of Quiet Places', 'Under the Fig Tree', 'The Long Way Home', 'Ordinary Magic', 'Letters from the Coast']
 const sampleAuthors = ['Mira Ellison', 'Jonas Vale', 'Amara Sato', 'N. R. Finch', 'Clara Moss', 'Leo Winter']
@@ -20,14 +23,32 @@ function api(name: string, ...args: unknown[]) {
 
 export const bridge = {
   preview: isPreview,
-  async getState(): Promise<AppState> { return isPreview ? { ...previewState, books: [...previewState.books], devices: [...previewState.devices] } : api('GetState') },
+  async getState(): Promise<AppState> {
+    if (isPreview && previewStateError) throw new Error('Could not refresh library. Try again.')
+    return isPreview ? { ...previewState, books: [...previewState.books], devices: [...previewState.devices] } : api('GetState')
+  },
   async importBooks(): Promise<ImportResult> {
     if (!isPreview) return api('ImportBooks')
-    return { imported: 2, duplicates: 1, errors: [] }
+    return { imported: 2, duplicates: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
+  },
+  async readClipboardFiles(): Promise<string[]> {
+    if (!isPreview) return api('ReadClipboardFiles')
+    return ['~/Downloads/Piranesi.epub', '~/Downloads/The Silent Library.epub']
   },
   async importPaths(paths: string[]): Promise<ImportResult> {
     if (!isPreview) return api('ImportPaths', paths)
-    return { imported: paths.length, duplicates: 0, errors: [] }
+    let imported = 0
+    let duplicates = 0
+    const bookIDs = paths.map((path, i) => {
+      const title = fileTitle(path)
+      const existing = previewState.books.find(book => book.title.toLowerCase() === title.toLowerCase())
+      if (existing) { duplicates++; return existing.id }
+      const id = `preview-import-${Date.now()}-${i}`
+      previewState.books = [...previewState.books, { id, title, authors: [], language: '', sha256: '', coverURL: `preview:${i}`, addedAt: new Date().toISOString(), revision: 1 }]
+      imported++
+      return id
+    })
+    return { imported, duplicates, errors: [], bookIDs: [...new Set(bookIDs)] }
   },
   async previewImport(): Promise<ImportResult> {
     const files = ['The Garden of Small Beginnings.epub', 'Piranesi.epub', 'The City and Its Uncertain Walls.epub', 'The Midnight Library.epub', 'The Thursday Murder Club.epub', 'A Psalm for the Wild-Built.epub', 'The Overstory.epub', 'Circe.epub', 'The Book of Delights.epub', 'Station Eleven.epub', 'The Ocean at the End of the Lane.epub', 'Braiding Sweetgrass.epub', 'The House in the Cerulean Sea.epub', 'Never Let Me Go.epub', 'The Left Hand of Darkness.epub', 'The Dispossessed.epub', 'A duplicate title.epub', 'A damaged book.epub']
@@ -41,7 +62,7 @@ export const bridge = {
     }
     const titles = files.slice(0, 16).map(name => name.replace(/\.epub$/i, ''))
     previewState.books = [...previewState.books, ...titles.map((title, i) => ({ id: `preview-import-${Date.now()}-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: new Date().toISOString(), revision: 1 }))]
-    return { imported: 16, duplicates: 1, errors: ['The damaged book could not be read.'] }
+    return { imported: 16, duplicates: 1, errors: ['The damaged book could not be read.'], bookIDs: [...new Set(previewState.books.filter(book => titles.includes(book.title)).map(book => book.id))] }
   },
   async updateBook(id: string, title: string, authors: string[]): Promise<Book> {
     if (!isPreview) return api('UpdateBook', id, title, authors)
@@ -74,11 +95,18 @@ export const bridge = {
   },
   async sendBooks(deviceID: string, bookIDs: string[]): Promise<void> {
     if (!isPreview) return api('SendBooks', deviceID, bookIDs)
-    const book = previewState.books.find(b => b.id === bookIDs[0])
-    if (book) {
-      previewTransfer = { id: 'preview-transfer', bookID: book.id, title: book.title, stage: 'transferring', message: 'Copying to Kindle', current: 44, total: 100 }
+    const selected = previewState.books.filter(book => bookIDs.includes(book.id))
+    if (!selected.length) return
+    const total = selected.length
+    previewTransfer = { id: 'preview-transfer', bookID: selected[0].id, title: total === 1 ? selected[0].title : `${total} books`, stage: 'transferring', message: 'Copying to Kindle', current: 0, total }
+    listeners.forEach(fn => fn(previewTransfer!))
+    for (let current = 1; current <= total; current++) {
+      await new Promise(resolve => window.setTimeout(resolve, 450))
+      if (!previewTransfer || previewTransfer.stage === 'cancelled') return
+      previewTransfer = { ...previewTransfer, bookID: selected[current - 1].id, title: selected[current - 1].title, current, total, stage: current === total ? 'done' : 'transferring', message: current === total ? 'Saved to Kindle' : 'Copying to Kindle' }
       listeners.forEach(fn => fn(previewTransfer!))
     }
+    previewTransfer = null
   },
   async cancelTransfer(): Promise<void> {
     if (!isPreview) return api('CancelTransfer')
@@ -94,6 +122,8 @@ export const bridge = {
   },
   async ejectDevice(id: string): Promise<void> {
     if (!isPreview) return api('EjectDevice', id)
+    await new Promise(resolve => window.setTimeout(resolve, previewEjectDelay))
+    if (previewEjectFails) throw new Error('Could not safely eject the Kindle. Check the connection and try again.')
     previewState.devices = previewState.devices.filter(device => device.id !== id)
   },
   async openLibraryFolder(): Promise<void> { if (!isPreview) return api('OpenLibraryFolder') },
@@ -142,5 +172,7 @@ export const bridge = {
     return `data:image/svg+xml,${encodeURIComponent(svg)}`
   },
 }
+
+function fileTitle(path: string) { return path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') || 'Imported book' }
 
 export function progressFromEvent(value: any): Progress { return value as Progress }

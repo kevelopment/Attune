@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/attune.svg" width="104" height="104" alt="Attune bonfire icon">
+  <img src="frontend/public/attune.svg" width="104" height="104" alt="Attune flame and open book icon">
 </p>
 
 <h1 align="center">Attune</h1>
