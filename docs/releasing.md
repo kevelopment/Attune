@@ -2,16 +2,18 @@
 
 The release workflow builds on native GitHub-hosted runners, bundles the pinned Kindling helper, and publishes versioned GitHub Releases only after every required build succeeds. Creating this workflow does not publish anything by itself.
 
-The first release is `v0.0.1-alpha.1`, an early preview. GitHub marks alpha, beta, and release-candidate tags as prereleases.
+The first stable release is `v0.0.1`. Older alpha releases remain available in GitHub Releases; this version updates the app, package metadata, and documentation to stable `0.0.1`.
 
 ## Release targets
 
+The `v0.0.1` release builds all four targets with the library, preview, updater, and experimental USB Kindle discovery, transfer, and eject. Physical devices have not been validated on every platform.
+
 | Runner target | Download | Scope |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1-alpha.1.zip` | Library, preview, and USB Kindle management |
-| macOS, Intel | `Attune-macos-amd64-0.0.1-alpha.1.zip` | Same feature scope; separate CPU build |
-| Windows, x64 | `Attune-windows-amd64-0.0.1-alpha.1.zip` | Experimental library and preview; USB management unavailable |
-| Linux, x64 | `Attune-linux-amd64-0.0.1-alpha.1.tar.gz` | Experimental library and preview; USB management unavailable |
+| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1.zip` | Library, preview, updater, experimental USB Kindle management |
+| macOS, Intel | `Attune-macos-amd64-0.0.1.zip` | Same feature scope; separate CPU build |
+| Windows, x64 | `Attune-windows-amd64-0.0.1.zip` | Library, preview, updater, experimental USB Kindle management |
+| Linux, x64 | `Attune-linux-amd64-0.0.1.tar.gz` | Library, preview, updater, experimental USB Kindle management |
 
 `SHA256SUMS.txt` accompanies the downloadable archives. macOS packages contain `Attune.app`; Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
 
@@ -27,15 +29,16 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 ## Publish a version
 
-Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1-alpha.1` builds a native app with product version `0.0.1` and publishes a GitHub prerelease. The frontend package retains the full semantic version `0.0.1-alpha.1`.
+Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1` builds a native app with Wails product version `0.0.1` and publishes a stable GitHub Release. The release scripts embed the full semantic version in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-Check the local tree and checks before creating a tag:
+Choose the next unused version tag. After the first stable `v0.0.1` release, the next example is `v0.0.2`:
 
 ```sh
-./scripts/test.sh
+mise run test
+mise run lint
 git status --short
-git tag -a v0.0.1-alpha.1 -m "Attune v0.0.1-alpha.1"
-git push origin v0.0.1-alpha.1
+git tag -a v0.0.2 -m "Attune v0.0.2"
+git push origin v0.0.2
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.
@@ -56,4 +59,4 @@ When updating Kindling, verify upstream release assets and hashes for every matr
 
 ## Validation limits
 
-Local macOS builds and Go race/vet checks can be run in this checkout. Linux and Windows source compile checks do not substitute for launching their GUI builds on those operating systems. The first GitHub Actions run is still needed to validate the hosted runner configuration; hardware testing is still needed for device support.
+Pull requests run native race tests on macOS arm64, macOS x64, Linux x64, and Windows x64. The Linux lint job checks Go formatting, `go vet`, and TypeScript types. Physical-device behavior has not been validated on every platform.

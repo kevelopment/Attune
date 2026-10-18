@@ -51,6 +51,16 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 .history-button:disabled{opacity:.38;cursor:default}
 .topbar .toolbar-button{height:32px}
 .search-box input:focus,.search-box input:focus-visible{outline:none;box-shadow:none}
+.topbar{grid-column:1/-1;margin-right:-12px;padding:0 12px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px}
+.topbar-leading{min-width:0;padding:0 40px 0 76px;display:flex;align-items:center;gap:14px}
+.topbar-leading .global-page-title{overflow:hidden;text-overflow:ellipsis}
+.topbar-center{position:relative;display:flex;align-items:center;justify-content:center;min-width:0}
+.topbar-center .search-box{width:clamp(180px,34vw,420px)}
+.topbar-center .activity-center{position:absolute;right:calc(100% + 8px);top:50%;transform:translateY(-50%)}
+.topbar-center,.topbar-center *{--wails-draggable:no-drag}
+.topbar .top-actions{min-width:0;margin-left:0;justify-content:flex-end}
+@media(max-width:900px){.topbar{gap:7px}.topbar-leading{gap:8px}.topbar .top-actions{gap:5px}.topbar .search-box{width:clamp(130px,19vw,190px)}}
+@media(max-width:760px){.topbar .top-actions .toolbar-button{width:34px;padding:0}.topbar .top-actions .toolbar-button span{display:none}}
 
 .updates-card>div span{max-width:100%;white-space:normal;line-height:1.5}
 

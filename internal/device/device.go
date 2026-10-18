@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -23,8 +22,8 @@ import (
 const maxCommandOutput = 1 << 20
 
 type volume struct {
-	Root, ID, Name string
-	External       bool
+	Root, ID, Name, Device, MountDevice string
+	External                            bool
 }
 
 // Manager accesses mounted volumes. Its unexported hooks keep production
@@ -410,12 +409,9 @@ func (m *Manager) Remove(expected model.Device, relativePath string) error {
 	return os.Remove(p)
 }
 
-// Eject unmounts a validated mounted external volume on macOS.
+// Eject safely removes a validated mounted external volume.
 func (m *Manager) Eject(ctx context.Context, expected model.Device) error {
 	m.init()
-	if runtime.GOOS != "darwin" {
-		return errors.New("eject is supported on macOS only")
-	}
 	d, err := m.selectExpected(expected)
 	if err != nil {
 		return err
@@ -427,8 +423,7 @@ func (m *Manager) Eject(ctx context.Context, expected model.Device) error {
 	if current.ID != expected.ID {
 		return errors.New("device identity changed before eject")
 	}
-	_, err = m.command(ctx, "diskutil", "eject", d.Root)
-	if err != nil {
+	if err = ejectVolume(ctx, current, m.command); err != nil {
 		return fmt.Errorf("eject %s: %w", d.Name, err)
 	}
 	return nil

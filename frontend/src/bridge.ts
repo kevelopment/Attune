@@ -1,6 +1,6 @@
-import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress } from './types'
+import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress, UpdateState } from './types'
 
-const isPreview = new URLSearchParams(location.search).has('preview')
+const isPreview = new URLSearchParams(location.search).has('preview') || (import.meta.env.DEV && import.meta.env.VITE_ATTUNE_PREVIEW === '1')
 const previewStateError = new URLSearchParams(location.search).get('state') === 'error'
 const previewEjectFails = new URLSearchParams(location.search).get('eject') === 'fail'
 const previewEjectDelay = new URLSearchParams(location.search).get('eject') === 'slow' ? 8000 : 1400
@@ -9,6 +9,11 @@ const sampleTitles = ['The Silent Library', 'A Field Guide to Elsewhere', 'Light
 const sampleAuthors = ['Mira Ellison', 'Jonas Vale', 'Amara Sato', 'N. R. Finch', 'Clara Moss', 'Leo Winter']
 const previewBooks: Book[] = sampleTitles.map((title, i) => ({ id: `sample-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: new Date(Date.now() - i * 86400000).toISOString(), revision: 1 }))
 const previewState: AppState = { books: previewBooks, devices: [{ id: 'kindle-preview', name: 'Kindle', root: '/Volumes/Kindle', freeBytes: 842_000_000, totalBytes: 1_600_000_000 }], converterReady: true, converterVersion: 'preview', libraryPath: '~/Library/Application Support/Ebook Library' }
+const updateScenario = new URLSearchParams(location.search).get('update')
+let previewUpdate: UpdateState = { currentVersion: '0.0.1', latestVersion: updateScenario && updateScenario !== 'latest' ? '0.0.2' : '', available: !!updateScenario && updateScenario !== 'latest', downloaded: updateScenario === 'ready', status: updateScenario === 'ready' ? 'ready' : updateScenario === 'error' ? 'error' : updateScenario === 'available' ? 'available' : 'idle', releaseURL: 'https://github.com/kevelopment/Attune/releases', releaseNotes: 'A few thoughtful improvements for your library.', progress: updateScenario === 'ready' ? 100 : 0, received: 0, total: 0, error: updateScenario === 'error' ? 'The update could not be downloaded. Please try again.' : '' }
+let previewUpdateAttempts = 0
+let updateListeners: ((state: UpdateState) => void)[] = []
+function emitUpdate(patch: Partial<UpdateState>) { previewUpdate = { ...previewUpdate, ...patch }; updateListeners.forEach(listener => listener({ ...previewUpdate })) }
 const previewDevice: Device = { ...previewState.devices[0] }
 let listeners: ((p: Progress) => void)[] = []
 let importListeners: ((p: ImportProgress) => void)[] = []
@@ -23,6 +28,33 @@ function api(name: string, ...args: unknown[]) {
 
 export const bridge = {
   preview: isPreview,
+  async getUpdateState(): Promise<UpdateState> { return isPreview ? { ...previewUpdate } : api('GetUpdateState') },
+  async checkForUpdates(): Promise<UpdateState> {
+    if (!isPreview) return api('CheckForUpdates')
+    if (previewUpdate.downloaded) return { ...previewUpdate }
+    emitUpdate({ status: 'checking', error: '' })
+    await new Promise(resolve => window.setTimeout(resolve, 300))
+    emitUpdate({ status: previewUpdate.available ? 'available' : 'idle' })
+    return { ...previewUpdate }
+  },
+  async downloadUpdate(): Promise<UpdateState> {
+    if (!isPreview) return api('DownloadUpdate')
+    const failDownload = updateScenario === 'error' && previewUpdateAttempts++ === 0
+    emitUpdate({ status: 'downloading', error: '', progress: 0, total: 100 })
+    for (let received = 10; received <= 100; received += 10) {
+      await new Promise(resolve => window.setTimeout(resolve, 120))
+      if (failDownload && received === 30) { const error = 'The download was interrupted. Please try again.'; emitUpdate({ status: 'error', error }); throw new Error(error) }
+      emitUpdate({ received, progress: received })
+    }
+    emitUpdate({ status: 'ready', downloaded: true })
+    return { ...previewUpdate }
+  },
+  async restartNow(): Promise<void> {
+    if (!isPreview) return api('RestartNow')
+    emitUpdate({ status: 'restarting' })
+    await new Promise(resolve => window.setTimeout(resolve, 400))
+    emitUpdate({ status: 'idle', currentVersion: previewUpdate.latestVersion, available: false, downloaded: false })
+  },
   async getState(): Promise<AppState> {
     if (isPreview && previewStateError) throw new Error('Could not refresh library. Try again.')
     return isPreview ? { ...previewState, books: [...previewState.books], devices: [...previewState.devices] } : api('GetState')
@@ -137,7 +169,8 @@ export const bridge = {
     if (isPreview) {
       if (event === 'transfer:progress') listeners.push(cb)
       if (event === 'import:progress') importListeners.push(cb)
-      return () => { listeners = listeners.filter(fn => fn !== cb); importListeners = importListeners.filter(fn => fn !== cb) }
+      if (event === 'update:state') updateListeners.push(cb)
+      return () => { listeners = listeners.filter(fn => fn !== cb); importListeners = importListeners.filter(fn => fn !== cb); updateListeners = updateListeners.filter(fn => fn !== cb) }
     }
     return window.runtime?.EventsOn?.(event, cb)
   },

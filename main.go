@@ -4,8 +4,10 @@ import (
 	"embed"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
+	"attune/internal/updater"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -16,6 +18,12 @@ import (
 var assets embed.FS
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--attune-update-helper" {
+		if err := updater.RunHelper(os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	app := NewApp()
 	err := wails.Run(&options.App{
 		Title: "Attune", Width: 1240, Height: 820, MinWidth: 900, MinHeight: 600,

@@ -3,10 +3,11 @@ set -eu
 . "$(dirname -- "$0")/env.sh"
 VERSION=${1:?usage: scripts/build-release.sh VERSION [webkit-tag]}
 TAG=${2:-}
-node -e 'if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.argv[1])) process.exit(2)' "$VERSION" || {
-  echo "product version must be a numeric MAJOR.MINOR.PATCH" >&2
+node -e 'if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)(\.(0|[1-9][0-9]*))?)?$/.test(process.argv[1])) process.exit(2)' "$VERSION" || {
+  echo "version must be MAJOR.MINOR.PATCH with an optional alpha, beta, or rc suffix" >&2
   exit 2
 }
+PRODUCT_VERSION=${VERSION%%-*}
 goos=$(go env GOOS)
 goarch=$(go env GOARCH)
 helper=third_party/kindling/$goos-$goarch/kindling-cli
@@ -22,11 +23,11 @@ backup=$(mktemp)
 cp wails.json "$backup"
 restore_config() { cp "$backup" wails.json; rm -f "$backup"; }
 trap restore_config EXIT HUP INT TERM
-node -e 'const fs=require("fs"); const p="wails.json"; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.info.productVersion=process.argv[1]; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n")' "$VERSION"
+node -e 'const fs=require("fs"); const p="wails.json"; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.info.productVersion=process.argv[1]; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n")' "$PRODUCT_VERSION"
 if [ -n "$TAG" ]; then
-  wails build -clean -platform "$goos/$goarch" -tags "$TAG"
+  wails build -clean -platform "$goos/$goarch" -tags "$TAG" -ldflags "-X main.appVersion=$VERSION -X main.updateEnabled=true"
 else
-  wails build -clean -platform "$goos/$goarch"
+  wails build -clean -platform "$goos/$goarch" -ldflags "-X main.appVersion=$VERSION -X main.updateEnabled=true"
 fi
 stage="build/release/Attune-$goos-$goarch"
 mkdir -p "$stage/licenses" dist
@@ -54,10 +55,10 @@ elif [ "$goos" = linux ]; then
   cp "$helper" "$stage/kindling-cli"
   chmod 755 "$stage/Attune" "$stage/kindling-cli"
   cat > "$stage/INSTALL.txt" <<'EOF'
-Attune Linux amd64 (experimental; library features only)
+Attune Linux amd64 (experimental)
 
 Run ./Attune. This build requires GTK 3 and WebKit2GTK 4.1 runtime libraries.
-Kindle USB discovery, transfer, and eject are available only in the macOS build.
+USB Kindle discovery, transfer, and eject are experimental and need lsblk, udisksctl, and UDisks/polkit permissions. Hardware validation is limited; ensure the Kindle is mounted before transferring.
 EOF
   tar -czf "dist/Attune-linux-$goarch.tar.gz" -C build/release "Attune-$goos-$goarch"
 else

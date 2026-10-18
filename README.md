@@ -46,41 +46,37 @@ The preview is a quick way to check a book's contents and language before sendin
 
 ### A companion for your reader
 
-On macOS, connect a mounted USB Kindle to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
+Connect a mounted USB Kindle on macOS, Linux, or Windows to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
 
-Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Device support and operating-system support are separate: Windows and Linux builds currently offer the library and preview; USB management is macOS-only.
+Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Experimental USB discovery, transfer, and eject are implemented for macOS, Linux, and Windows, but have not been validated with physical devices across those platforms. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters.
 
 ## Download
 
-The first release, [v0.0.1-alpha.1](https://github.com/kevelopment/Attune/releases/tag/v0.0.1-alpha.1), is an early preview. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune.
+Attune 0.0.1 is the first stable release. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install 0.0.1 manually once.
 
-| Platform | Status | Package |
+| Platform | Features | Package |
 | --- | --- | --- |
-| macOS 13+ | Primary platform; library and USB Kindle management | App bundle in a ZIP archive |
-| Windows | Experimental; library and preview | ZIP archive |
-| Linux | Experimental; library and preview | Compressed application archive |
+| macOS 13+ | Library and experimental USB Kindle management | App bundle in a ZIP archive |
+| Windows | Library and experimental USB Kindle management | ZIP archive |
+| Linux | Library and experimental USB Kindle management | Compressed application archive |
 
-Windows and Linux runtime validation is still limited. macOS downloads are locally signed, not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for packaging, system requirements, and signing status.
+Physical-device behavior has not been validated on every platform. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters. Linux also requires GTK 3 and WebKit2GTK 4.1; Windows requires the WebView2 runtime. macOS downloads are ad-hoc signed and not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for details.
+
+## Software updates
+
+Attune checks public GitHub releases for updates; no account is required. When an update is available, click its download icon. Attune downloads and verifies the update before offering **Restart now** or **Later**. A staged update installs when you quit and is active the next time you open Attune; your library stays in place. The installed app folder must be writable. Older builds without the updater need a one-time manual download from the [Releases page](https://github.com/kevelopment/Attune/releases).
 
 ## Build from source
 
 Attune uses **Go · Wails v2 · React · TypeScript · SQLite**. It uses the operating system's webview rather than shipping a separate browser engine. [Kindling](https://github.com/ciscoriordan/kindling) provides standalone EPUB-to-MOBI conversion.
 
-For development, use `mise run up` to start the native app with React/CSS hot reload and Go rebuilds; `mise run down` stops it. The development library is isolated from your normal library. See [development setup](docs/development.md) for prerequisites.
+Use `mise run dev` for a browser preview, `mise run test` for Go tests, and `mise run lint` for formatting, vet, and TypeScript checks. On macOS, `mise run up` starts the native app with React/CSS hot reload and Go rebuilds; `mise run down` stops it. `mise run build` builds the desktop app for the current platform. See [development setup](docs/development.md) for prerequisites and platform details.
 
-For a local macOS build:
-
-```sh
-./scripts/fetch-kindling.sh
-./scripts/build.sh
-open build/bin/Attune.app
-```
-
-See [development](docs/development.md) for prerequisites, tests, browser preview, and the project layout. See [releasing](docs/releasing.md) for the tag-driven build and publication workflow.
+See [development](docs/development.md) for prerequisites, tasks, browser preview, and the project layout. See [releasing](docs/releasing.md) for the tag-driven build and publication workflow.
 
 ## Where things stand
 
-Attune is an early project. The library, metadata editor, book preview, and macOS USB transfer flow are implemented. A full reader with annotations and reading progress, PDF import, and additional device families are future work.
+Attune 0.0.1 is the first stable release. The library, metadata editor, book preview, updater, and experimental USB management for macOS, Linux, and Windows are implemented. PDF import and additional device families are future work.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
@@ -88,7 +84,7 @@ Metadata edits are stored in the library without changing the original EPUB. Gen
 
 ## Contributing
 
-Bug reports, small fixes, and device compatibility reports are welcome. For larger changes, describe the problem and proposed behavior in an issue first. Keep changes focused and run the [local checks](docs/development.md#checks).
+All contributions are welcome. Small, focused changes are easier to review. Pull requests automatically run the required test and lint checks.
 
 ## License & acknowledgements
 
