@@ -52,15 +52,21 @@ Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 
 
 ## Download
 
-Attune 0.0.1 is the first stable release. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install 0.0.1 manually once.
+Attune 0.0.1 is the first stable release. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install 0.0.1 manually once. A 0.0.2 draft is being prepared with macOS disk images; drafts are not available through the in-app updater until published.
 
 | Platform | Features | Package |
 | --- | --- | --- |
-| macOS 13+ | Library and experimental USB Kindle management | App bundle in a ZIP archive |
+| macOS 13+ | Library and experimental USB Kindle management | 0.0.1 ZIP (current); 0.0.2 DMG and updater ZIP (draft) |
 | Windows | Library and experimental USB Kindle management | ZIP archive |
 | Linux | Library and experimental USB Kindle management | Compressed application archive |
 
-Physical-device behavior has not been validated on every platform. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters. Linux also requires GTK 3 and WebKit2GTK 4.1; Windows requires the WebView2 runtime. macOS downloads are ad-hoc signed and not Apple-notarized; Windows downloads are not Authenticode-signed. See the [release guide](docs/releasing.md) for details.
+**macOS installation:**
+
+1. For a DMG, open it and drag Attune to Applications. For a ZIP, extract it and move `Attune.app` into Applications.
+2. If Gatekeeper says “Apple could not verify Attune,” choose **Done**, then open **System Settings → Privacy & Security** and select **Open Anyway** for Attune.
+3. Choose **Open** in the confirmation prompt. See [Apple’s instructions](https://support.apple.com/en-us/102445) for details. Current macOS downloads are ad-hoc signed and not Apple-notarized, so this may be needed on first launch.
+
+Windows downloads are not Authenticode-signed. Physical-device behavior has not been validated on every platform. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters. Linux also requires GTK 3 and WebKit2GTK 4.1; Windows requires the WebView2 runtime. See the [release guide](docs/releasing.md) for details.
 
 ## Software updates
 

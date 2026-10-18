@@ -6,16 +6,18 @@ The first stable release is `v0.0.1`. Older alpha releases remain available in G
 
 ## Release targets
 
-The `v0.0.1` release builds all four targets with the library, preview, updater, and experimental USB Kindle discovery, transfer, and eject. Physical devices have not been validated on every platform.
+The published `v0.0.1` release includes four platform packages. A draft `v0.0.2` is being prepared with the refreshed macOS icon, Dock appearance adaptation, a drag-to-Applications DMG, and the updater ZIP. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
 
 | Runner target | Download | Scope |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Attune-macos-arm64-0.0.1.zip` | Library, preview, updater, experimental USB Kindle management |
-| macOS, Intel | `Attune-macos-amd64-0.0.1.zip` | Same feature scope; separate CPU build |
-| Windows, x64 | `Attune-windows-amd64-0.0.1.zip` | Library, preview, updater, experimental USB Kindle management |
-| Linux, x64 | `Attune-linux-amd64-0.0.1.tar.gz` | Library, preview, updater, experimental USB Kindle management |
+| macOS, Apple Silicon | `Attune-macos-arm64-0.0.2.dmg` and `Attune-macos-arm64-0.0.2.zip` | Draft DMG installer and updater package |
+| macOS, Intel | `Attune-macos-amd64-0.0.2.dmg` and `Attune-macos-amd64-0.0.2.zip` | Same feature scope; separate CPU build |
+| Windows, x64 | `Attune-windows-amd64-0.0.2.zip` | Library, preview, updater, experimental USB Kindle management |
+| Linux, x64 | `Attune-linux-amd64-0.0.2.tar.gz` | Library, preview, updater, experimental USB Kindle management |
 
-`SHA256SUMS.txt` accompanies the downloadable archives. macOS packages contain `Attune.app`; Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
+`SHA256SUMS.txt` accompanies all downloadable packages. The macOS DMG contains `Attune.app` and an Applications shortcut; drag the app to Applications to install it. The ZIP remains available for the in-app updater. Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
+
+The macOS release build uses the pinned, build-only Python packages in `scripts/requirements-macos-dmg.txt` to create the Finder layout and animated background. Python is not required to install or run Attune.
 
 Each package includes these files in its `licenses/` directory; the macOS app stores them at `Attune.app/Contents/Resources/licenses/`: `Attune-LICENSE.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES.txt`, `Kindling-LICENSE.txt`, and `Kindling-THIRD_PARTY_LICENSES.txt`.
 
@@ -23,7 +25,7 @@ Linux packages are built on Ubuntu 24.04 with GTK3 and WebKit2GTK 4.1. They requ
 
 ## Build artifacts without a release
 
-Run the **Release** workflow manually to build all four platform packages without publishing a GitHub Release. These Actions artifacts are labeled `0.0.0-manual` and retained for 14 days.
+Run the **Release** workflow manually with the default inputs to build all four platform packages without creating a GitHub Release. These Actions artifacts are labeled `0.0.0-manual` and retained for 14 days. To prepare a draft, set **Create draft** and enter a stable version such as `0.0.2`; the workflow builds all four platform packages, embeds that version, and creates a draft targeting the exact workflow-run commit. Re-running updates the draft only when its version and target commit match. A draft does not appear in the app updater; publish it manually from GitHub Releases when ready. If publishing it creates a tag push, the release workflow preserves the existing release and its assets.
 
 The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with release write permission confined to that job. No personal access token needs to be committed or configured.
 
@@ -31,14 +33,14 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1` builds a native app with Wails product version `0.0.1` and publishes a stable GitHub Release. The release scripts embed the full semantic version in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-Choose the next unused version tag. After the first stable `v0.0.1` release, the next example is `v0.0.2`:
+To prepare `v0.0.2`, use the draft workflow described above. After that draft is published, the next tag example is `v0.0.3`:
 
 ```sh
 mise run test
 mise run lint
 git status --short
-git tag -a v0.0.2 -m "Attune v0.0.2"
-git push origin v0.0.2
+git tag -a v0.0.3 -m "Attune v0.0.3"
+git push origin v0.0.3
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.
@@ -47,7 +49,7 @@ Do not overwrite an existing release tag to change its contents. Fix the issue a
 
 ## Signing status
 
-Current macOS artifacts receive an ad-hoc signature so their bundle integrity can be verified locally. They are not signed with a Developer ID or notarized by Apple. Windows binaries are not Authenticode-signed. Operating systems may therefore show trust warnings.
+Current macOS artifacts receive an ad-hoc signature so their bundle integrity can be verified locally. They are not signed with a Developer ID or notarized by Apple, so Gatekeeper may block the first launch. Follow [Apple’s Open Anyway steps](https://support.apple.com/en-us/102445) if macOS cannot verify Attune. Windows binaries are not Authenticode-signed. Operating systems may therefore show trust warnings.
 
 Before distributing broadly, provision release signing credentials through GitHub Actions secrets and add the appropriate Developer ID/notarization or Authenticode steps. Certificates, private keys, and passwords must remain outside the repository.
 
