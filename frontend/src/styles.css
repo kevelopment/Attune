@@ -64,7 +64,7 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 
 .updates-card>div span{max-width:100%;white-space:normal;line-height:1.5}
 
-.rail-updates svg{width:16px;height:16px;stroke-width:2.1}
+.rail-updates{margin-bottom:7px}.rail-updates svg{width:16px;height:16px;stroke-width:2.1}
 
 .recent-window-caption{color:var(--muted);font-size:.83333rem;white-space:nowrap}
 .recent-timeline{display:flex;flex-direction:column;gap:25px;padding:4px 2px 18px 5px}
