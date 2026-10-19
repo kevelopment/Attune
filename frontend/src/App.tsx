@@ -319,16 +319,19 @@ export default function App() {
     importActivityId.current = activityID
     try {
       const result = await action()
-      if (!result || (!result.imported && !result.duplicates && !result.errors?.length)) {
+      if (!result || (!result.imported && !result.duplicates && !result.skipped && !result.errors?.length)) {
         removeActivity(activityID)
         return result ?? null
       }
       const errors = result.errors ?? []
       const imported = result.imported ?? 0
       const duplicates = result.duplicates ?? 0
-      updateActivity(activityID, { status: errors.length ? 'error' : 'success', current: result.imported + result.duplicates + errors.length, total: total || result.imported + result.duplicates + errors.length, detail: errors[0] || `${imported} imported · ${duplicates} duplicates` })
-      if (errors.length) notify({ text: `${imported} imported · ${duplicates} duplicates · ${errors.length} failed: ${errors[0]}`, kind: 'error' })
-      else notify({ text: `${imported} imported · ${duplicates} duplicates`, kind: 'success' })
+      const skipped = result.skipped ?? 0
+      const processed = imported + duplicates + skipped + errors.length
+      const summary = `${imported} imported · ${duplicates} duplicates${skipped ? ` · ${skipped} skipped` : ''}`
+      updateActivity(activityID, { status: errors.length ? 'error' : 'success', current: processed, total: total || processed, detail: errors[0] || summary })
+      if (errors.length) notify({ text: `${summary} · ${errors.length} failed: ${errors[0]}`, kind: 'error' })
+      else notify({ text: summary, kind: 'success' })
       await refresh(true)
       return result
     } catch (e) {
@@ -388,6 +391,10 @@ export default function App() {
     if (intakeFlowGuard.current || importGuard.current || busy || transferActive || changingLibrary) return
     if (bridge.preview) await performImport(() => bridge.previewImport(), 18, 'Preparing sample EPUBs…')
     else await performImport(() => bridge.importBooks())
+  }
+  async function importCalibreLibrary() {
+    if (intakeFlowGuard.current || busy || transferActive || changingLibrary) return
+    await performImport(() => bridge.importCalibreLibrary(), 0, 'Calibre library')
   }
   async function addDevice() {
     if (ejectingDeviceIDs.current.size) return
@@ -573,7 +580,7 @@ export default function App() {
     </header>
 
     <main className="main-panel" style={{ '--book-scale': bookSize / 100 } as React.CSSProperties} data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (page !== 'library' && page !== 'recent' && page !== 'device') return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
-      {page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
+      {page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} onImportCalibre={() => void importCalibreLibrary()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
@@ -866,9 +873,9 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
     </section>
   </div>
 }
-function Settings({ updates, onUpdates, textSize, setTextSize, state, onOpenFolder, onChangeLocation, changingLibrary, controlsDisabled }: { updates: UpdateState; onUpdates: () => void; textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
+function Settings({ updates, onUpdates, textSize, setTextSize, state, onOpenFolder, onChangeLocation, onImportCalibre, changingLibrary, controlsDisabled }: { updates: UpdateState; onUpdates: () => void; textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; onImportCalibre: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
   const location = state?.libraryPath || 'Unavailable'
-  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><UpdateSettingsCard state={updates} onOpen={onUpdates}/><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
+  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card calibre-import-card"><div><strong>Import Calibre library</strong><span>Copies EPUBs, metadata and covers into Attune. Your Calibre library stays unchanged.</span></div><button className="toolbar-button" onClick={onImportCalibre} disabled={controlsDisabled}>Choose library…</button></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><UpdateSettingsCard state={updates} onOpen={onUpdates}/><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
 }
 
 function stageName(stage: string) { return ({ queued: 'Waiting in queue', converting: 'Converting for Kindle', transferring: 'Copying to device', done: 'Saved to Kindle', cancelled: 'Transfer cancelled', error: 'Check your device and try again' } as Record<string, string>)[stage] ?? 'Preparing transfer' }

@@ -17,6 +17,7 @@
 <p align="center">
   <a href="https://github.com/kevelopment/Attune/releases/latest">Download latest release</a> ·
   <a href="#a-little-less-library-admin">Features</a> ·
+  <a href="#bring-your-calibre-library">Import from Calibre</a> ·
   <a href="docs/development.md">Build from source</a> ·
   <a href="docs/releasing.md">Release guide</a>
 </p>
@@ -28,15 +29,25 @@
 
 ## A little less library admin
 
+This README describes the current `main` branch. Check the [release notes](https://github.com/kevelopment/Attune/releases) for the features included in each download.
+
 Manage your EPUB library locally, edit metadata, preview chapters, and send books to Kindle over USB. No account or Calibre installation required. Kindle USB support is experimental and currently targets the original Kindle 1 and 2 using legacy MOBI conversion.
 
 | Make room for your books | Take a closer look |
 | --- | --- |
-| Import DRM-free EPUBs by dropping files, using the picker, or pasting copied files (Linux needs `wl-paste` or `xclip`). Track progress and skip exact duplicates. | Browse a cover grid or compact list, adjust book sizes, and filter by author, genre, or language. |
+| Import DRM-free EPUBs by dropping files, using the picker, or pasting copied files (Linux needs `wl-paste` or `xclip`). Track progress and skip byte-identical duplicates. | Browse an evenly spaced cover grid or compact list, adjust book sizes, and filter by author, genre, or language. |
 | Correct metadata and replace missing or incorrect covers with JPEG or PNG images in a resizable details panel. | Preview chapters, local book styling, and images in a centered reading page. |
 | Keep original EPUBs intact in an app-managed library, choose its location, and adjust text size. | Track imports, transfers, and ejections in session activity; choose book actions or select several books at once. |
 
-Use **Book details → Change cover** to choose a JPEG or PNG image (up to 32 MiB and 40 megapixels). Cover changes are saved immediately and applied to the next reader export; the original EPUB stays untouched.
+Use the size slider beside the gallery/list toggle to adjust covers and list density smoothly from 50% to 160%. Attune remembers your preference. Sort and filter menus support keyboard navigation, and applied filters appear as removable tags.
+
+Use **Book details → Change cover** to choose a JPEG or PNG image (up to 32 MiB and 40 megapixels). Cover changes are saved immediately and used when sending books to Kindle; the original EPUB stays untouched.
+
+### Bring your Calibre library
+
+Use **Settings → Import Calibre library → Choose library…** and select the folder containing `metadata.db`. Attune copies its EPUBs, metadata, and covers into your current library. The Calibre library is opened read-only and stays unchanged; no Calibre installation is required.
+
+Titles, authors, tags, publisher, language, publication date, identifiers, description, and series information come from Calibre rather than potentially older metadata embedded in the EPUB. Books are added to your current Attune library. Byte-identical EPUBs are skipped without changing existing metadata or covers; matching titles, authors, or ISBNs are not merged, so a modified EPUB can become a separate entry. Books without an EPUB are reported as skipped. The import appears as one batch in Recently added, with progress and results in session activity. This is a snapshot import; export and library synchronization are not included. See [import details](docs/calibre-import.md).
 
 ### A small pause before the next chapter
 
@@ -80,20 +91,22 @@ Attune uses **Go · Wails v2 · React · TypeScript · SQLite**. It uses the ope
 
 Use `mise run dev` for a browser preview, `mise run test` for Go tests, and `mise run lint` for formatting, vet, and TypeScript checks. On macOS, `mise run up` starts the native app with React/CSS hot reload and Go rebuilds; `mise run down` stops it. `mise run build` builds the desktop app for the current platform. See [development setup](docs/development.md) for prerequisites and platform details.
 
-See [development](docs/development.md) for prerequisites, tasks, browser preview, and the project layout. See [releasing](docs/releasing.md) for the tag-driven build and publication workflow.
+See [releasing](docs/releasing.md) for the tag-driven build and publication workflow.
 
 ## Where things stand
 
-Attune is an early-stage project. Its library, metadata editor, book preview, updater, and experimental USB Kindle management for macOS, Linux, and Windows are implemented. PDF import and support for additional device families are future work.
+Attune is an early-stage project. Its library, Calibre importer, metadata editor, book preview, updater, and experimental USB Kindle management for macOS, Linux, and Windows are implemented. PDF import and support for additional device families are future work.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
-Metadata edits are stored in the library without changing the original EPUB. Generated Kindle files currently receive title and author overrides; other edited fields remain library metadata.
+Metadata edits are stored in the library without changing the original EPUB. Generated Kindle files receive title and author overrides and replacement covers; other edited fields remain library metadata.
 
 ## Contributing
 
 All contributions are welcome. Small, focused changes are easier to review. Pull requests automatically run the required test and lint checks.
 
 ## License & acknowledgements
+
+Attune takes inspiration from [Calibre](https://github.com/kovidgoyal/calibre), created by Kovid Goyal. Thank you to Kovid and the Calibre community for building the foundation that so many ebook tools and readers rely on.
 
 [MIT](LICENSE), with separate [third-party notices](THIRD_PARTY_NOTICES.md). Thanks to [Wails](https://wails.io), [Kindling](https://github.com/ciscoriordan/kindling), and the open-source ebook community. The name is a small nod to resting and preparing for the next journey at a bonfire.
