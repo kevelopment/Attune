@@ -445,6 +445,91 @@ func TestImportPathsReturnsUniqueBookIDsInInputOrder(t *testing.T) {
 	}
 }
 
+func TestImportPathsPersistsBatchPerOperationAndPreservesDuplicates(t *testing.T) {
+	a := testApp(t)
+	root := a.root
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.epub")
+	second := filepath.Join(dir, "second.epub")
+	third := filepath.Join(dir, "third.epub")
+	writeTestEPUB(t, first, "First")
+	writeTestEPUB(t, second, "Second")
+	writeTestEPUB(t, third, "Third")
+
+	firstResult, err := a.ImportPaths([]string{first, second})
+	if err != nil || firstResult.Imported != 2 {
+		t.Fatalf("first import = %#v, %v", firstResult, err)
+	}
+	books, err := a.store.ListBooks()
+	if err != nil || len(books) != 2 {
+		t.Fatalf("first books = %#v, %v", books, err)
+	}
+	firstBatch := books[0].ImportBatchID
+	if firstBatch == "" || books[1].ImportBatchID != firstBatch {
+		t.Fatalf("first operation batches = %q, %q", firstBatch, books[1].ImportBatchID)
+	}
+	var addedAt string
+	for _, book := range books {
+		if book.Title == "First" {
+			addedAt = book.AddedAt
+		}
+	}
+
+	thirdResult, err := a.ImportPaths([]string{third})
+	if err != nil || thirdResult.Imported != 1 {
+		t.Fatalf("second operation = %#v, %v", thirdResult, err)
+	}
+	books, err = a.store.ListBooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var thirdBatch string
+	for _, book := range books {
+		if book.Title == "Third" {
+			thirdBatch = book.ImportBatchID
+		}
+	}
+	if thirdBatch == "" || thirdBatch == firstBatch {
+		t.Fatalf("separate operation batch = %q, want distinct from %q", thirdBatch, firstBatch)
+	}
+
+	secondResult, err := a.ImportPaths([]string{first})
+	if err != nil || secondResult.Duplicates != 1 {
+		t.Fatalf("duplicate import = %#v, %v", secondResult, err)
+	}
+	books, err = a.store.ListBooks()
+	if err != nil || len(books) != 3 {
+		t.Fatalf("books after duplicate = %#v, %v", books, err)
+	}
+	for _, book := range books {
+		if book.Title == "First" && (book.ImportBatchID != firstBatch || book.AddedAt != addedAt) {
+			t.Fatalf("duplicate changed original batch/time: %#v", book)
+		}
+	}
+
+	if err = a.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := library.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	books, err = reopened.ListBooks()
+	if err != nil || len(books) != 3 {
+		t.Fatalf("reopened books = %#v, %v", books, err)
+	}
+	for _, book := range books {
+		want := firstBatch
+		if book.Title == "Third" {
+			want = thirdBatch
+		}
+		if book.ImportBatchID != want {
+			t.Fatalf("reopened batch for %q = %q, want %q", book.Title, book.ImportBatchID, want)
+		}
+	}
+}
+
 func TestEmptyImportDoesNotEmitCompletion(t *testing.T) {
 	a := testApp(t)
 	var progress int

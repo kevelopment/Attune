@@ -6,14 +6,14 @@ The first stable release was `v0.0.1`. Older alpha releases remain available in 
 
 ## Release targets
 
-The published `v0.0.2` release includes four platform packages, the refreshed macOS icon, Dock appearance adaptation, a drag-to-Applications DMG, and the updater ZIP. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
+Release packages include native builds for four platform targets, light and dark macOS icons, a drag-to-Applications DMG, and updater archives. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
 
 | Runner target | Download | Scope |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Attune-macos-arm64-0.0.2.dmg` and `Attune-macos-arm64-0.0.2.zip` | DMG installer and updater package |
-| macOS, Intel | `Attune-macos-amd64-0.0.2.dmg` and `Attune-macos-amd64-0.0.2.zip` | Same feature scope; separate CPU build |
-| Windows, x64 | `Attune-windows-amd64-0.0.2.zip` | Library, preview, updater, experimental USB Kindle management |
-| Linux, x64 | `Attune-linux-amd64-0.0.2.tar.gz` | Library, preview, updater, experimental USB Kindle management |
+| macOS, Apple Silicon | `Attune-macos-arm64-0.0.3.dmg` and `Attune-macos-arm64-0.0.3.zip` | DMG installer and updater package |
+| macOS, Intel | `Attune-macos-amd64-0.0.3.dmg` and `Attune-macos-amd64-0.0.3.zip` | Same feature scope; separate CPU build |
+| Windows, x64 | `Attune-windows-amd64-0.0.3.zip` | Library, preview, updater, experimental USB Kindle management |
+| Linux, x64 | `Attune-linux-amd64-0.0.3.tar.gz` | Library, preview, updater, experimental USB Kindle management |
 
 `SHA256SUMS.txt` accompanies all downloadable packages. The macOS DMG contains `Attune.app` and an Applications shortcut; drag the app to Applications to install it. The ZIP remains available for the in-app updater. Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
 
@@ -33,14 +33,14 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1` builds a native app with Wails product version `0.0.1` and publishes a stable GitHub Release. The release scripts embed the full semantic version in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-To prepare a release before publishing, use the draft workflow described above. The next unused tag after `v0.0.2` is `v0.0.3`:
+To prepare a release before publishing, use the draft workflow described above. Version `v0.0.3` is prepared in this commit. After its release, use the next unused version rather than recreating its tag:
 
 ```sh
 mise run test
 mise run lint
 git status --short
-git tag -a v0.0.3 -m "Attune v0.0.3"
-git push origin v0.0.3
+git tag -a v0.0.4 -m "Attune v0.0.4"
+git push origin v0.0.4
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.

@@ -7,10 +7,16 @@ const previewEjectDelay = new URLSearchParams(location.search).get('eject') === 
 const coverColors = ['#797a66', '#577067', '#bb7b55', '#586987', '#986b7b', '#8d7258']
 const sampleTitles = ['The Silent Library', 'A Field Guide to Elsewhere', 'Light Between Worlds', 'Small Hours', 'The Art of Getting Lost', 'A Map of Quiet Places', 'Under the Fig Tree', 'The Long Way Home', 'Ordinary Magic', 'Letters from the Coast']
 const sampleAuthors = ['Mira Ellison', 'Jonas Vale', 'Amara Sato', 'N. R. Finch', 'Clara Moss', 'Leo Winter']
-const previewBooks: Book[] = sampleTitles.map((title, i) => ({ id: `sample-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: new Date(Date.now() - i * 86400000).toISOString(), revision: 1 }))
+const previewBooks: Book[] = sampleTitles.map((title, i) => {
+  const batch = Math.floor(i / 3)
+  const added = new Date()
+  added.setDate(added.getDate() - batch)
+  added.setTime(added.getTime() - (i % 3) * 1000)
+  return { id: `sample-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: added.toISOString(), importBatchID: `sample-batch-${batch}`, revision: 1 }
+})
 const previewState: AppState = { books: previewBooks, devices: [{ id: 'kindle-preview', name: 'Kindle', root: '/Volumes/Kindle', freeBytes: 842_000_000, totalBytes: 1_600_000_000 }], converterReady: true, converterVersion: 'preview', libraryPath: '~/Library/Application Support/Ebook Library' }
 const updateScenario = new URLSearchParams(location.search).get('update')
-let previewUpdate: UpdateState = { currentVersion: '0.0.2', latestVersion: updateScenario && updateScenario !== 'latest' ? '0.0.3' : '', available: !!updateScenario && updateScenario !== 'latest', downloaded: updateScenario === 'ready', status: updateScenario === 'ready' ? 'ready' : updateScenario === 'error' ? 'error' : updateScenario === 'available' ? 'available' : 'idle', releaseURL: 'https://github.com/kevelopment/Attune/releases', releaseNotes: 'A few thoughtful improvements for your library.', progress: updateScenario === 'ready' ? 100 : 0, received: 0, total: 0, error: updateScenario === 'error' ? 'The update could not be downloaded. Please try again.' : '' }
+let previewUpdate: UpdateState = { currentVersion: '0.0.3', latestVersion: updateScenario && updateScenario !== 'latest' ? '0.0.4' : '', available: !!updateScenario && updateScenario !== 'latest', downloaded: updateScenario === 'ready', status: updateScenario === 'ready' ? 'ready' : updateScenario === 'error' ? 'error' : updateScenario === 'available' ? 'available' : 'idle', releaseURL: 'https://github.com/kevelopment/Attune/releases', releaseNotes: 'A few thoughtful improvements for your library.', progress: updateScenario === 'ready' ? 100 : 0, received: 0, total: 0, error: updateScenario === 'error' ? 'The update could not be downloaded. Please try again.' : '' }
 let previewUpdateAttempts = 0
 let updateListeners: ((state: UpdateState) => void)[] = []
 function emitUpdate(patch: Partial<UpdateState>) { previewUpdate = { ...previewUpdate, ...patch }; updateListeners.forEach(listener => listener({ ...previewUpdate })) }
@@ -71,18 +77,20 @@ export const bridge = {
     if (!isPreview) return api('ImportPaths', paths)
     let imported = 0
     let duplicates = 0
+    const importBatchID = crypto.randomUUID()
     const bookIDs = paths.map((path, i) => {
       const title = fileTitle(path)
       const existing = previewState.books.find(book => book.title.toLowerCase() === title.toLowerCase())
       if (existing) { duplicates++; return existing.id }
       const id = `preview-import-${Date.now()}-${i}`
-      previewState.books = [...previewState.books, { id, title, authors: [], language: '', sha256: '', coverURL: `preview:${i}`, addedAt: new Date().toISOString(), revision: 1 }]
+      previewState.books = [...previewState.books, { id, title, authors: [], language: '', sha256: '', coverURL: `preview:${i}`, addedAt: new Date().toISOString(), importBatchID, revision: 1 }]
       imported++
       return id
     })
     return { imported, duplicates, errors: [], bookIDs: [...new Set(bookIDs)] }
   },
   async previewImport(): Promise<ImportResult> {
+    const importBatchID = crypto.randomUUID()
     const files = ['The Garden of Small Beginnings.epub', 'Piranesi.epub', 'The City and Its Uncertain Walls.epub', 'The Midnight Library.epub', 'The Thursday Murder Club.epub', 'A Psalm for the Wild-Built.epub', 'The Overstory.epub', 'Circe.epub', 'The Book of Delights.epub', 'Station Eleven.epub', 'The Ocean at the End of the Lane.epub', 'Braiding Sweetgrass.epub', 'The House in the Cerulean Sea.epub', 'Never Let Me Go.epub', 'The Left Hand of Darkness.epub', 'The Dispossessed.epub', 'A duplicate title.epub', 'A damaged book.epub']
     for (let i = 0; i < files.length; i++) {
       await new Promise(resolve => window.setTimeout(resolve, 180))
@@ -93,7 +101,7 @@ export const bridge = {
       importListeners.forEach(fn => fn(p))
     }
     const titles = files.slice(0, 16).map(name => name.replace(/\.epub$/i, ''))
-    previewState.books = [...previewState.books, ...titles.map((title, i) => ({ id: `preview-import-${Date.now()}-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: new Date().toISOString(), revision: 1 }))]
+    previewState.books = [...previewState.books, ...titles.map((title, i) => ({ id: `preview-import-${Date.now()}-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: new Date().toISOString(), importBatchID, revision: 1 }))]
     return { imported: 16, duplicates: 1, errors: ['The damaged book could not be read.'], bookIDs: [...new Set(previewState.books.filter(book => titles.includes(book.title)).map(book => book.id))] }
   },
   async updateBook(id: string, title: string, authors: string[]): Promise<Book> {
@@ -101,6 +109,32 @@ export const bridge = {
     const found = previewState.books.find(b => b.id === id)!
     Object.assign(found, { title, authors })
     return found
+  },
+  async changeBookCover(id: string, file?: File): Promise<Book | null> {
+    if (!isPreview) return api('ChangeBookCover', id)
+    if (!file) return null
+    if (!file.size || file.size > 32 * 1024 * 1024) throw new Error('Choose a JPEG or PNG image smaller than 32 MB.')
+    const header = new Uint8Array(await file.slice(0, 8).arrayBuffer())
+    const png = [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => header[index] === byte)
+    const jpeg = header[0] === 255 && header[1] === 216 && header[2] === 255
+    if (!png && !jpeg) throw new Error('Choose a JPEG or PNG image.')
+    const coverURL = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(new Error('The cover image could not be read.'))
+      reader.readAsDataURL(file)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => image.naturalWidth * image.naturalHeight <= 40_000_000 ? resolve() : reject(new Error('Choose a cover image with no more than 40 megapixels.'))
+      image.onerror = () => reject(new Error('The cover image is damaged or unreadable.'))
+      image.src = coverURL
+    })
+    const found = previewState.books.find(book => book.id === id)
+    if (!found) throw new Error('This book is no longer in your library.')
+    const updated = { ...found, coverURL, revision: found.revision + 1 }
+    previewState.books = previewState.books.map(book => book.id === id ? updated : book)
+    return updated
   },
   async updateBookMetadata(id: string, edit: BookMetadataEdit): Promise<Book> {
     if (!isPreview) return api('UpdateBookMetadata', id, edit)

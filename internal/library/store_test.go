@@ -2,17 +2,38 @@ package library
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"attune/internal/epub"
 	"attune/internal/model"
 )
+
+func jpegCover(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 24, 36))
+	for y := 0; y < 36; y++ {
+		for x := 0; x < 24; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 8), G: uint8(y * 5), B: 70, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
+}
 
 func fileHash(path string) (string, error) {
 	f, err := os.Open(path)
@@ -119,6 +140,91 @@ func TestImportEditDuplicateAndRestart(t *testing.T) {
 	}
 }
 
+func TestReplaceCoverPersistsAndExportsWithoutChangingOriginal(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(t.TempDir(), "book.epub")
+	fixtureEPUB(t, source, "Test Book")
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := s.ImportEPUB(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalPath := filepath.Join(root, "books", b.ID, "original.epub")
+	originalHash, err := fileHash(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchangedExport := filepath.Join(t.TempDir(), "unchanged.epub")
+	if err = s.ExportEPUB(b.ID, unchangedExport); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fileHash(unchangedExport); err != nil || got != originalHash {
+		t.Fatalf("unmodified cover export differs from original: hash=%q err=%v", got, err)
+	}
+	newCover := jpegCover(t)
+	updated, err := s.ReplaceBookCover(b.ID, newCover)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Revision != b.Revision+1 || updated.CoverURL != b.CoverURL {
+		t.Fatalf("cover update = %#v", updated)
+	}
+	coverPath, err := s.CoverPath(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(filepath.Base(coverPath), "cover.override.") {
+		t.Fatalf("override path = %q", coverPath)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	books, err := s.ListBooks()
+	if err != nil || len(books) != 1 || books[0].Revision != updated.Revision {
+		t.Fatalf("reopened books = %#v, %v", books, err)
+	}
+	output := filepath.Join(t.TempDir(), "export.epub")
+	if err = s.ExportEPUB(b.ID, output); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := epub.Parse(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(metadata.Cover, newCover) || metadata.CoverExt != ".jpg" {
+		t.Fatalf("exported cover ext=%q bytes=%d", metadata.CoverExt, len(metadata.Cover))
+	}
+	if got, err := fileHash(originalPath); err != nil || got != originalHash {
+		t.Fatalf("immutable original changed: hash=%q err=%v", got, err)
+	}
+}
+
+func TestValidateCoverRejectsCorruptAndOversizedData(t *testing.T) {
+	tooManyPixels := []byte{0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x19, 0x00, 0x19, 0x00, 0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00}
+	for name, data := range map[string][]byte{
+		"corrupt":         []byte("not an image"),
+		"oversized":       bytes.Repeat([]byte{0}, (32<<20)+1),
+		"too_many_pixels": tooManyPixels,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := ValidateCover(data); err == nil {
+				t.Fatal("invalid cover was accepted")
+			}
+		})
+	}
+	if ext, mime, err := ValidateCover(jpegCover(t)); err != nil || ext != ".jpg" || mime != "image/jpeg" {
+		t.Fatalf("valid JPEG = %q %q %v", ext, mime, err)
+	}
+}
+
 func TestSubjectsMigrationBackfillsWithoutChangingUserMetadataOrEPUB(t *testing.T) {
 	root := t.TempDir()
 	id := "00112233445566778899aabbccddeeff"
@@ -159,6 +265,9 @@ func TestSubjectsMigrationBackfillsWithoutChangingUserMetadataOrEPUB(t *testing.
 	b := books[0]
 	if b.Title != "User Edited Title" || len(b.Authors) != 1 || b.Authors[0] != "User Author" || b.Revision != 4 {
 		t.Fatalf("migration overwrote user fields: %#v", b)
+	}
+	if b.ImportBatchID != "" {
+		t.Fatalf("legacy book batch = %q, want empty", b.ImportBatchID)
 	}
 	if len(b.Subjects) != 2 || b.Subjects[0] != "Fiction" || b.Subjects[1] != "Mystery" {
 		t.Fatalf("backfilled subjects: %#v", b.Subjects)

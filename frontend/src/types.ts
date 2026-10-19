@@ -18,6 +18,7 @@ export type Book = {
   fileSize?: number
   modifiedAt?: string
   addedAt: string
+  importBatchID?: string
   revision: number
 }
 export type BookMetadataEdit = Pick<Book, 'title' | 'authors' | 'publisher' | 'language' | 'published' | 'subjects' | 'series' | 'seriesIndex' | 'description'> & { publisher: string; language: string; published: string; subjects: string[]; series: string; seriesIndex: string; description: string }
