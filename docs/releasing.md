@@ -2,15 +2,15 @@
 
 The release workflow builds on native GitHub-hosted runners, bundles the pinned Kindling helper, and publishes versioned GitHub Releases only after every required build succeeds. Creating this workflow does not publish anything by itself.
 
-The first stable release is `v0.0.1`. Older alpha releases remain available in GitHub Releases; this version updates the app, package metadata, and documentation to stable `0.0.1`.
+The first stable release was `v0.0.1`. Older alpha releases remain available in GitHub Releases.
 
 ## Release targets
 
-The published `v0.0.1` release includes four platform packages. A draft `v0.0.2` is being prepared with the refreshed macOS icon, Dock appearance adaptation, a drag-to-Applications DMG, and the updater ZIP. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
+The published `v0.0.2` release includes four platform packages, the refreshed macOS icon, Dock appearance adaptation, a drag-to-Applications DMG, and the updater ZIP. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
 
 | Runner target | Download | Scope |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Attune-macos-arm64-0.0.2.dmg` and `Attune-macos-arm64-0.0.2.zip` | Draft DMG installer and updater package |
+| macOS, Apple Silicon | `Attune-macos-arm64-0.0.2.dmg` and `Attune-macos-arm64-0.0.2.zip` | DMG installer and updater package |
 | macOS, Intel | `Attune-macos-amd64-0.0.2.dmg` and `Attune-macos-amd64-0.0.2.zip` | Same feature scope; separate CPU build |
 | Windows, x64 | `Attune-windows-amd64-0.0.2.zip` | Library, preview, updater, experimental USB Kindle management |
 | Linux, x64 | `Attune-linux-amd64-0.0.2.tar.gz` | Library, preview, updater, experimental USB Kindle management |
@@ -25,7 +25,7 @@ Linux packages are built on Ubuntu 24.04 with GTK3 and WebKit2GTK 4.1. They requ
 
 ## Build artifacts without a release
 
-Run the **Release** workflow manually with the default inputs to build all four platform packages without creating a GitHub Release. These Actions artifacts are labeled `0.0.0-manual` and retained for 14 days. To prepare a draft, set **Create draft** and enter a stable version such as `0.0.2`; the workflow builds all four platform packages, embeds that version, and creates a draft targeting the exact workflow-run commit. Re-running updates the draft only when its version and target commit match. A draft does not appear in the app updater; publish it manually from GitHub Releases when ready. If publishing it creates a tag push, the release workflow preserves the existing release and its assets.
+Run the **Release** workflow manually with the default inputs to build all four platform packages without creating a GitHub Release. These Actions artifacts are labeled `0.0.0-manual` and retained for 14 days. To prepare a draft, set **Create draft** and enter a stable version such as `0.0.3`; the workflow builds all four platform packages, embeds that version, and creates a draft targeting the exact workflow-run commit. Re-running updates the draft only when its version and target commit match. A draft does not appear in the app updater; publish it manually from GitHub Releases when ready. If publishing it creates a tag push, the release workflow preserves the existing release and its assets.
 
 The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with release write permission confined to that job. No personal access token needs to be committed or configured.
 
@@ -33,7 +33,7 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1` builds a native app with Wails product version `0.0.1` and publishes a stable GitHub Release. The release scripts embed the full semantic version in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-To prepare `v0.0.2`, use the draft workflow described above. After that draft is published, the next tag example is `v0.0.3`:
+To prepare a release before publishing, use the draft workflow described above. The next unused tag after `v0.0.2` is `v0.0.3`:
 
 ```sh
 mise run test

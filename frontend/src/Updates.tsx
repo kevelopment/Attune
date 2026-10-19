@@ -8,6 +8,7 @@ import './Updates.css'
 
 const initialState: UpdateState = { currentVersion: version, latestVersion: '', available: false, downloaded: false, status: 'idle', releaseURL: '', releaseNotes: '', progress: 0, received: 0, total: 0, error: '' }
 const failure = (error: unknown) => error instanceof Error ? error.message : String(error)
+const UPDATE_CHECK_INTERVAL = 15 * 60 * 1000
 
 export function useUpdater() {
   const [state, setState] = useState<UpdateState>(initialState)
@@ -18,7 +19,7 @@ export function useUpdater() {
   const active = useRef(false)
 
   const check = useCallback(async (manual = true) => {
-    if (checking.current || (!manual && Date.now() - lastCheck.current < 60 * 60 * 1000)) return
+    if (checking.current || (!manual && Date.now() - lastCheck.current < UPDATE_CHECK_INTERVAL)) return
     checking.current = true
     lastCheck.current = Date.now()
     try { const next = await bridge.checkForUpdates(); if (active.current) { setState(next); setChecked(true) } }
@@ -34,7 +35,7 @@ export function useUpdater() {
     void bridge.getUpdateState().then(next => { if (active.current) { setState(next); if (!next.downloaded) void check(false) } }).catch(() => { if (active.current) void check(false) })
     const focus = () => { if (document.visibilityState === 'visible') void check(false) }
     window.addEventListener('focus', focus)
-    const timer = window.setInterval(() => void check(false), 6 * 60 * 60 * 1000)
+    const timer = window.setInterval(() => void check(false), UPDATE_CHECK_INTERVAL)
     return () => { active.current = false; if (typeof unsubscribe === 'function') unsubscribe(); window.removeEventListener('focus', focus); window.clearInterval(timer) }
   }, [check])
 

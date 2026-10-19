@@ -52,11 +52,11 @@ Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 
 
 ## Download
 
-Attune 0.0.1 is the first stable release. Choose the archive for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release archives include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install 0.0.1 manually once. A 0.0.2 draft is being prepared with macOS disk images; drafts are not available through the in-app updater until published.
+Choose the latest release for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release packages include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install a current release manually once.
 
 | Platform | Features | Package |
 | --- | --- | --- |
-| macOS 13+ | Library and experimental USB Kindle management | 0.0.1 ZIP (current); 0.0.2 DMG and updater ZIP (draft) |
+| macOS 13+ | Library and experimental USB Kindle management | DMG installer and updater ZIP |
 | Windows | Library and experimental USB Kindle management | ZIP archive |
 | Linux | Library and experimental USB Kindle management | Compressed application archive |
 
@@ -70,7 +70,7 @@ Windows downloads are not Authenticode-signed. Physical-device behavior has not 
 
 ## Software updates
 
-Attune checks public GitHub releases for updates; no account is required. When an update is available, click its download icon. Attune downloads and verifies the update before offering **Restart now** or **Later**. A staged update installs when you quit and is active the next time you open Attune; your library stays in place. The installed app folder must be writable. Older builds without the updater need a one-time manual download from the [Releases page](https://github.com/kevelopment/Attune/releases).
+Attune checks public GitHub releases on startup and every 15 minutes while open; no account is required. When an update is available, click its download icon. Attune downloads and verifies the update before offering **Restart now** or **Later**. A staged update installs when you quit and is active the next time you open Attune; your library stays in place. The installed app folder must be writable. Older builds without the updater need a one-time manual download from the [Releases page](https://github.com/kevelopment/Attune/releases).
 
 ## Build from source
 
