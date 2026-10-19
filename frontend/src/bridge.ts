@@ -1,4 +1,4 @@
-import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress, UpdateState } from './types'
+import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress, UpdateState, ReadingProgress, ReadingBookmark } from './types'
 
 const isPreview = new URLSearchParams(location.search).has('preview') || new URLSearchParams(location.search).get('welcome') === '1' || (import.meta.env.DEV && import.meta.env.VITE_ATTUNE_PREVIEW === '1')
 const previewStateError = new URLSearchParams(location.search).get('state') === 'error'
@@ -27,6 +27,9 @@ let listeners: ((p: Progress) => void)[] = []
 let importListeners: ((p: ImportProgress) => void)[] = []
 let previewTransfer: Progress | null = null
 let previewDeviceBooks: DeviceBook[] = previewBooks.slice(0, 6).map((book, i) => ({ path: `documents/${book.title}.mobi`, name: `${book.title}.mobi`, size: 257000 + i * 113000, bookID: book.id, title: book.title, authors: book.authors, language: book.language, coverURL: book.coverURL }))
+const previewReadingProgress = new Map<string, ReadingProgress>()
+const previewReadingBookmarks = new Map<string, ReadingBookmark[]>()
+let previewBookmarkID = 1
 
 function api(name: string, ...args: unknown[]) {
   const fn = window.go?.main?.App?.[name]
@@ -183,6 +186,28 @@ export const bridge = {
     const book = previewState.books.find(candidate => candidate.id === id)
     if (!book) throw new Error('This book is no longer in your library.')
     return { book, chapters: [{ id: 'preview-chapter-1', title: 'Chapter One', href: '/preview/sample/chapter-1.xhtml' }, { id: 'preview-chapter-2', title: 'The next morning', href: '/preview/sample/chapter-2.xhtml' }, { id: 'preview-chapter-3', title: 'A small discovery', href: '/preview/sample/chapter-3.xhtml' }] }
+  },
+  async getReadingProgress(id: string): Promise<ReadingProgress> {
+    if (!isPreview) return api('GetReadingProgress', id)
+    return previewReadingProgress.get(id) ?? { bookID: id, chapterIndex: 0, position: 0 }
+  },
+  async saveReadingProgress(id: string, chapterIndex: number, position: number): Promise<void> {
+    if (!isPreview) return api('SaveReadingProgress', id, chapterIndex, position)
+    previewReadingProgress.set(id, { bookID: id, chapterIndex, position, updatedAt: new Date().toISOString() })
+  },
+  async getReadingBookmarks(id: string): Promise<ReadingBookmark[]> {
+    if (!isPreview) return api('GetReadingBookmarks', id)
+    return [...(previewReadingBookmarks.get(id) ?? [])]
+  },
+  async addReadingBookmark(id: string, chapterIndex: number, position: number): Promise<ReadingBookmark> {
+    if (!isPreview) return api('AddReadingBookmark', id, chapterIndex, position)
+    const bookmark = { id: previewBookmarkID++, bookID: id, chapterIndex, position, createdAt: new Date().toISOString() }
+    previewReadingBookmarks.set(id, [bookmark, ...(previewReadingBookmarks.get(id) ?? [])])
+    return bookmark
+  },
+  async deleteReadingBookmark(id: string, bookmarkID: number): Promise<void> {
+    if (!isPreview) return api('DeleteReadingBookmark', id, bookmarkID)
+    previewReadingBookmarks.set(id, (previewReadingBookmarks.get(id) ?? []).filter(bookmark => bookmark.id !== bookmarkID))
   },
   async sendBooks(deviceID: string, bookIDs: string[]): Promise<void> {
     if (!isPreview) return api('SendBooks', deviceID, bookIDs)

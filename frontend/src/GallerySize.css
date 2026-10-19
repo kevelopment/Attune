@@ -14,31 +14,41 @@
   cursor: default;
 }
 .book-size-control svg { width: 15px; height: 15px; flex: none; stroke-width: 1.8; }
-.book-size-control input[type="range"] {
-  width: 76px;
+.book-size-control input[type="range"],
+.reader-controls label input[type="range"],
+.reader-text-menu-panel input[type="range"] {
   min-width: 0;
   height: 20px;
   margin: 0;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
+  outline: none;
 }
-.book-size-control input[type="range"]::-webkit-slider-runnable-track {
+.book-size-control input[type="range"]::-webkit-slider-runnable-track,
+.reader-controls label input[type="range"]::-webkit-slider-runnable-track,
+.reader-text-menu-panel input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 4px;
   background: linear-gradient(to right, var(--accent) 0 var(--range-progress), var(--line-strong) var(--range-progress) 100%);
 }
-.book-size-control input[type="range"]::-moz-range-track {
+.book-size-control input[type="range"]::-moz-range-track,
+.reader-controls label input[type="range"]::-moz-range-track,
+.reader-text-menu-panel input[type="range"]::-moz-range-track {
   height: 4px;
   border-radius: 4px;
   background: var(--line-strong);
 }
-.book-size-control input[type="range"]::-moz-range-progress {
+.book-size-control input[type="range"]::-moz-range-progress,
+.reader-controls label input[type="range"]::-moz-range-progress,
+.reader-text-menu-panel input[type="range"]::-moz-range-progress {
   height: 4px;
   border-radius: 4px;
   background: var(--accent);
 }
-.book-size-control input[type="range"]::-webkit-slider-thumb {
+.book-size-control input[type="range"]::-webkit-slider-thumb,
+.reader-controls label input[type="range"]::-webkit-slider-thumb,
+.reader-text-menu-panel input[type="range"]::-webkit-slider-thumb {
   width: 10px;
   height: 10px;
   margin-top: -3px;
@@ -50,7 +60,9 @@
   box-shadow: 0 1px 3px #0003;
   cursor: ew-resize;
 }
-.book-size-control input[type="range"]::-moz-range-thumb {
+.book-size-control input[type="range"]::-moz-range-thumb,
+.reader-controls label input[type="range"]::-moz-range-thumb,
+.reader-text-menu-panel input[type="range"]::-moz-range-thumb {
   width: 8px;
   height: 8px;
   border: 2px solid var(--accent);
@@ -59,6 +71,14 @@
   box-shadow: 0 1px 3px #0003;
   cursor: ew-resize;
 }
+.book-size-control input[type="range"]:focus-visible::-webkit-slider-thumb,
+.reader-controls label input[type="range"]:focus-visible::-webkit-slider-thumb,
+.reader-text-menu-panel input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent), 0 1px 3px #0003;
+}
+
+.book-size-control input[type="range"] { width:76px; }
+.reader-controls label input[type="range"] { width:74px; }
 
 @container (max-width:400px) {
   .library-toolbar { gap:3px; }

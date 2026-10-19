@@ -22,6 +22,11 @@ type appBindings interface {
 	UpdateBookMetadata(string, model.BookMetadataEdit) (model.Book, error)
 	ChangeBookCover(string) (model.Book, error)
 	GetBookPreview(string) (model.BookPreview, error)
+	GetReadingProgress(string) (model.ReadingProgress, error)
+	SaveReadingProgress(string, int, float64) error
+	GetReadingBookmarks(string) ([]model.ReadingBookmark, error)
+	AddReadingBookmark(string, int, float64) (model.ReadingBookmark, error)
+	DeleteReadingBookmark(string, int64) error
 	DeleteBook(string) error
 	SelectDevice() (model.Device, error)
 	GetDeviceBooks(string) ([]model.DeviceBook, error)

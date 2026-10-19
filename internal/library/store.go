@@ -85,7 +85,21 @@ func migrate(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS device_books (
 		device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, path TEXT NOT NULL,
 		book_id TEXT NOT NULL DEFAULT '', cache_key TEXT NOT NULL DEFAULT '', PRIMARY KEY(device_id, path)
-	);`)
+	);
+	CREATE TABLE IF NOT EXISTS reading_progress (
+		book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+		chapter_index INTEGER NOT NULL DEFAULT 0,
+		position REAL NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS reader_bookmarks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		chapter_index INTEGER NOT NULL,
+		position REAL NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS reader_bookmarks_book_created ON reader_bookmarks(book_id, created_at DESC);`)
 	if err != nil {
 		return err
 	}
@@ -750,6 +764,82 @@ func (s *Store) BookSource(id string) (model.Book, string, error) {
 	}
 	s.populateFileStats(&b)
 	return b, p, nil
+}
+
+func (s *Store) ReadingProgress(id string) (model.ReadingProgress, error) {
+	if !validBookID(id) {
+		return model.ReadingProgress{}, ErrNotFound
+	}
+	var progress model.ReadingProgress
+	err := s.db.QueryRow(`SELECT book_id,chapter_index,position,updated_at FROM reading_progress WHERE book_id=?`, id).
+		Scan(&progress.BookID, &progress.ChapterIndex, &progress.Position, &progress.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.ReadingProgress{BookID: id}, nil
+	}
+	return progress, err
+}
+
+func (s *Store) SaveReadingProgress(id string, chapter int, position float64) error {
+	if !validBookID(id) || chapter < 0 || math.IsNaN(position) || math.IsInf(position, 0) {
+		return errors.New("invalid reading position")
+	}
+	position = math.Max(0, math.Min(1, position))
+	_, err := s.db.Exec(`INSERT INTO reading_progress(book_id,chapter_index,position,updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(book_id) DO UPDATE SET chapter_index=excluded.chapter_index,position=excluded.position,updated_at=excluded.updated_at`,
+		id, chapter, position, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ReadingBookmarks(id string) ([]model.ReadingBookmark, error) {
+	if !validBookID(id) {
+		return nil, ErrNotFound
+	}
+	rows, err := s.db.Query(`SELECT id,book_id,chapter_index,position,created_at FROM reader_bookmarks WHERE book_id=? ORDER BY created_at DESC,id DESC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bookmarks := make([]model.ReadingBookmark, 0)
+	for rows.Next() {
+		var bookmark model.ReadingBookmark
+		if err := rows.Scan(&bookmark.ID, &bookmark.BookID, &bookmark.ChapterIndex, &bookmark.Position, &bookmark.CreatedAt); err != nil {
+			return nil, err
+		}
+		bookmarks = append(bookmarks, bookmark)
+	}
+	return bookmarks, rows.Err()
+}
+
+func (s *Store) AddReadingBookmark(id string, chapter int, position float64) (model.ReadingBookmark, error) {
+	if !validBookID(id) || chapter < 0 || math.IsNaN(position) || math.IsInf(position, 0) {
+		return model.ReadingBookmark{}, errors.New("invalid reading bookmark")
+	}
+	position = math.Max(0, math.Min(1, position))
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.Exec(`INSERT INTO reader_bookmarks(book_id,chapter_index,position,created_at) VALUES(?,?,?,?)`, id, chapter, position, createdAt)
+	if err != nil {
+		return model.ReadingBookmark{}, err
+	}
+	bookmarkID, err := result.LastInsertId()
+	if err != nil {
+		return model.ReadingBookmark{}, err
+	}
+	return model.ReadingBookmark{ID: bookmarkID, BookID: id, ChapterIndex: chapter, Position: position, CreatedAt: createdAt}, nil
+}
+
+func (s *Store) DeleteReadingBookmark(id string, bookmarkID int64) error {
+	if !validBookID(id) || bookmarkID < 1 {
+		return ErrNotFound
+	}
+	result, err := s.db.Exec(`DELETE FROM reader_bookmarks WHERE book_id=? AND id=?`, id, bookmarkID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err == nil && count == 0 {
+		return ErrNotFound
+	}
+	return err
 }
 func (s *Store) CoverPath(id string) (string, error) {
 	if !validBookID(id) {

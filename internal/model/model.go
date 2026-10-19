@@ -49,6 +49,21 @@ type BookPreview struct {
 	Chapters []PreviewChapter `json:"chapters"`
 }
 
+type ReadingProgress struct {
+	BookID       string  `json:"bookID"`
+	ChapterIndex int     `json:"chapterIndex"`
+	Position     float64 `json:"position"`
+	UpdatedAt    string  `json:"updatedAt,omitempty"`
+}
+
+type ReadingBookmark struct {
+	ID           int64   `json:"id"`
+	BookID       string  `json:"bookID"`
+	ChapterIndex int     `json:"chapterIndex"`
+	Position     float64 `json:"position"`
+	CreatedAt    string  `json:"createdAt"`
+}
+
 type Device struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`

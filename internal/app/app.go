@@ -561,6 +561,76 @@ func (a *App) GetBookPreview(id string) (model.BookPreview, error) {
 	return model.BookPreview{Book: book, Chapters: result}, nil
 }
 
+func (a *App) GetReadingProgress(id string) (model.ReadingProgress, error) {
+	if err := a.ready(); err != nil {
+		return model.ReadingProgress{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return model.ReadingProgress{}, errors.New("application is shutting down")
+	}
+	return a.store.ReadingProgress(id)
+}
+
+func (a *App) SaveReadingProgress(id string, chapterIndex int, position float64) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	if chapterIndex < 0 {
+		return errors.New("invalid reading position")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return errors.New("application is shutting down")
+	}
+	return a.store.SaveReadingProgress(id, chapterIndex, position)
+}
+
+func (a *App) GetReadingBookmarks(id string) ([]model.ReadingBookmark, error) {
+	if err := a.ready(); err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return nil, errors.New("application is shutting down")
+	}
+	return a.store.ReadingBookmarks(id)
+}
+
+func (a *App) AddReadingBookmark(id string, chapterIndex int, position float64) (model.ReadingBookmark, error) {
+	if err := a.ready(); err != nil {
+		return model.ReadingBookmark{}, err
+	}
+	preview, err := a.GetBookPreview(id)
+	if err != nil {
+		return model.ReadingBookmark{}, err
+	}
+	if chapterIndex < 0 || chapterIndex >= len(preview.Chapters) {
+		return model.ReadingBookmark{}, errors.New("invalid bookmark chapter")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return model.ReadingBookmark{}, errors.New("application is shutting down")
+	}
+	return a.store.AddReadingBookmark(id, chapterIndex, position)
+}
+
+func (a *App) DeleteReadingBookmark(id string, bookmarkID int64) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return errors.New("application is shutting down")
+	}
+	return a.store.DeleteReadingBookmark(id, bookmarkID)
+}
+
 func previewURL(id, resource string) string {
 	parts := strings.Split(resource, "/")
 	for i := range parts {

@@ -125,6 +125,21 @@ func TestImportEditDuplicateAndRestart(t *testing.T) {
 	if edited.Revision != 2 || edited.Title != "Edited" {
 		t.Fatalf("update failed: %#v", edited)
 	}
+	if err = s.SaveReadingProgress(b.ID, 2, 0.375); err != nil {
+		t.Fatal(err)
+	}
+	reading, err := s.ReadingProgress(b.ID)
+	if err != nil || reading.ChapterIndex != 2 || reading.Position != 0.375 {
+		t.Fatalf("reading progress = %#v, %v", reading, err)
+	}
+	bookmark, err := s.AddReadingBookmark(b.ID, 2, 0.375)
+	if err != nil || bookmark.ID == 0 {
+		t.Fatalf("add reading bookmark = %#v, %v", bookmark, err)
+	}
+	bookmarks, err := s.ReadingBookmarks(b.ID)
+	if err != nil || len(bookmarks) != 1 || bookmarks[0] != bookmark {
+		t.Fatalf("reading bookmarks = %#v, %v", bookmarks, err)
+	}
 	if _, dup, err = s.ImportEPUB(source); err != nil || !dup {
 		t.Fatalf("duplicate import = %v, %v", dup, err)
 	}
@@ -139,6 +154,21 @@ func TestImportEditDuplicateAndRestart(t *testing.T) {
 	books, err := s.ListBooks()
 	if err != nil || len(books) != 1 || books[0].Title != "Edited" || books[0].Revision != 2 {
 		t.Fatalf("restart list = %#v, %v", books, err)
+	}
+	reading, err = s.ReadingProgress(b.ID)
+	if err != nil || reading.ChapterIndex != 2 || reading.Position != 0.375 || reading.UpdatedAt == "" {
+		t.Fatalf("reading progress after restart = %#v, %v", reading, err)
+	}
+	bookmarks, err = s.ReadingBookmarks(b.ID)
+	if err != nil || len(bookmarks) != 1 || bookmarks[0].ID != bookmark.ID || bookmarks[0].Position != 0.375 {
+		t.Fatalf("reading bookmarks after restart = %#v, %v", bookmarks, err)
+	}
+	if err = s.DeleteReadingBookmark(b.ID, bookmark.ID); err != nil {
+		t.Fatal(err)
+	}
+	bookmarks, err = s.ReadingBookmarks(b.ID)
+	if err != nil || len(bookmarks) != 0 {
+		t.Fatalf("reading bookmarks after deletion = %#v, %v", bookmarks, err)
 	}
 }
 

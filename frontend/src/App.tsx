@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  BookOpen, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
+  BookOpen, LibraryBig, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
   CircleHelp, FolderOpen, Upload, Download, LoaderCircle, PanelRightClose, ImagePlus,
+  Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Type, ChevronDown, ChevronLeft, ChevronRight,
+  Bookmark, BookmarkPlus, Columns2, AlignLeft, Trash,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
@@ -17,6 +19,7 @@ import type { UpdateState } from './types'
 import DropdownSelect from './DropdownSelect'
 import Welcome from './Welcome'
 import type { CalibreLocation } from './Welcome'
+import { createReaderPagination, type ReaderPagination } from './readerPagination'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
@@ -75,10 +78,15 @@ export default function App() {
   const [ejectingDevice, setEjectingDevice] = useState<Device | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [previewTarget, setPreviewTarget] = useState<Book | null>(null)
+  const [readerOpen, setReaderOpen] = useState(false)
   const [bookPreview, setBookPreview] = useState<BookPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [previewChapter, setPreviewChapter] = useState(0)
+  const [readerSearch, setReaderSearch] = useState('')
+  const readerFindRef = useRef<() => void>(() => {})
+  const readerTurnRef = useRef<(direction: -1 | 1) => void>(() => {})
+  const readerSearchRef = useRef<HTMLInputElement>(null)
   const [progress, setProgress] = useState<Progress | null>(null)
   const { notify, dismiss } = useNotifications()
   const [busy, setBusy] = useState(false)
@@ -113,6 +121,7 @@ export default function App() {
   busyRef.current = busy
 
   function navigateTo(nextPage: Page) {
+    setReaderOpen(false)
     setNavigation(current => {
       if (current.pages[current.index] === nextPage) return current
       const pages = [...current.pages.slice(0, current.index + 1), nextPage]
@@ -266,12 +275,15 @@ export default function App() {
       const typing = !!target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
       if (confirmation && e.key !== 'Escape') return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && !typing) { e.preventDefault(); pasteFilesRef.current(); return }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRef.current?.focus() }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); (readerOpen ? readerSearchRef.current : searchRef.current)?.focus() }
+      if (readerOpen && !typing && e.key === 'ArrowLeft') { e.preventDefault(); readerTurnRef.current(-1) }
+      if (readerOpen && !typing && e.key === 'ArrowRight') { e.preventDefault(); readerTurnRef.current(1) }
       if (e.key === 'Escape') {
+        if (readerOpen && document.fullscreenElement) { e.preventDefault(); void document.exitFullscreen(); return }
         if (activeMenu || pasteMenu) { setActiveMenu(null); setPasteMenu(null); e.preventDefault(); return }
         if (intake) setIntake(null)
         else if (confirmation) setConfirmation(null)
-        else if (previewTarget) { setPreviewTarget(null); setBookPreview(null) }
+        else if (readerOpen) { setReaderOpen(false); setPreviewTarget(null); setBookPreview(null) }
         else { setFocusedBook(null); setFocusedDeviceBook(null); setEditing(false); setSelected([]) }
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && !typing) {
@@ -290,7 +302,7 @@ export default function App() {
     window.addEventListener('keydown', keys)
     window.addEventListener('paste', paste)
     return () => { window.removeEventListener('keydown', keys); window.removeEventListener('paste', paste) }
-  }, [page, visibleDeviceBooks, books, confirmation, previewTarget, activeMenu])
+  }, [page, visibleDeviceBooks, books, confirmation, previewTarget, readerOpen, bookPreview, activeMenu])
 
   useEffect(() => {
     setDeviceSelection([])
@@ -474,11 +486,17 @@ export default function App() {
   }
   async function openPreview(book: Book) {
     setPreviewTarget(book)
+    setReaderOpen(true)
     setBookPreview(null)
-    setPreviewChapter(0)
+    setReaderSearch('')
     setPreviewError('')
     setPreviewLoading(true)
-    try { setBookPreview(await bridge.getBookPreview(book.id)) }
+    try {
+      const next = await bridge.getBookPreview(book.id)
+      setBookPreview(next)
+      const saved = await bridge.getReadingProgress(book.id).catch(() => ({ bookID: book.id, chapterIndex: 0, position: 0 }))
+      setPreviewChapter(Math.max(0, Math.min(next.chapters.length - 1, saved.chapterIndex)))
+    }
     catch (e) { setPreviewError(message(e)) }
     finally { setPreviewLoading(false) }
   }
@@ -575,7 +593,7 @@ export default function App() {
     const next = await updater.download()
     if (next?.downloaded) setConfirmation(current => current ?? { title: 'Your update is ready', description: 'The download is verified. Restart now to use the new version, or keep using Attune and it will be active the next time you open the app.', confirmLabel: 'Restart now', cancelLabel: 'Later', danger: false, action: () => { void updater.restart() } })
   }
-  const detailsVisible = page !== 'settings' && page !== 'updates'
+  const detailsVisible = !readerOpen && page !== 'settings' && page !== 'updates'
   const detailsOpen = detailsVisible && !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
   if (!onboarding || onboarding.required || onboardingError) {
@@ -585,9 +603,10 @@ export default function App() {
   return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
       <nav className="rail-nav" aria-label="Library sections">
-        <button className={`rail-item ${page === 'library' ? 'active' : ''}`} aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><BookOpen/></button>
+        <button className={`rail-item ${page === 'library' ? 'active' : ''}`} aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><LibraryBig/></button>
         <button className={`rail-item ${page === 'recent' ? 'active' : ''}`} aria-label="Recently added" aria-current={page === 'recent' ? 'page' : undefined} onClick={() => navigateTo('recent')}><Clock3/></button>
         <button className={`rail-item ${page === 'device' ? 'active' : ''}`} data-drop-target={device ? 'device' : 'library'} aria-label="Reader" aria-current={page === 'device' ? 'page' : undefined} onClick={() => navigateTo('device')}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
+        {previewTarget && <button className={`rail-item ${readerOpen ? 'active' : ''}`} aria-label="Return to book" title="Return to book" aria-current={readerOpen ? 'page' : undefined} onClick={() => setReaderOpen(true)}><BookOpen/></button>}
       </nav>
       <div className="rail-spacer"/>
       {(updater.state.available || updater.state.downloaded) && <button className={`rail-item rail-updates ${page === 'updates' ? 'active' : ''}`} aria-label="Update available" aria-busy={updater.state.status === 'downloading'} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => { navigateTo('updates'); if (!updater.state.downloaded && updater.state.status !== 'downloading') void downloadUpdate() }}><Download/></button>}
@@ -596,24 +615,22 @@ export default function App() {
 
     <header className="topbar" data-drop-target={isDevice ? 'device' : 'library'}>
       <div className="topbar-leading">
-        <div className="topbar-navigation" aria-label="Navigation history">
+        {!readerOpen && <div className="topbar-navigation" aria-label="Navigation history">
           <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
           <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
-        </div>
-        <h1 className="global-page-title">{page === 'library' ? `All books (${books.length})` : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
+        </div>}
+        {readerOpen && previewTarget ? <><button className="history-button" aria-label="Previous page" title="Previous page" onClick={() => readerTurnRef.current(-1)}><ArrowLeft size={17}/></button><button className="history-button" aria-label="Next page" title="Next page" onClick={() => readerTurnRef.current(1)}><ArrowRight size={17}/></button><h1 className="global-page-title reader-global-title">{previewTarget.title}</h1></> : <h1 className="global-page-title">{page === 'library' ? `All books (${books.length})` : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>}
       </div>
       <div className="topbar-center">
-        {page !== 'settings' && <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>}
-        {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ F' : 'Ctrl+F'}</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
+        {readerOpen && previewTarget ? <label className="search-box"><Search size={17}/><input ref={readerSearchRef} placeholder="Find in book" aria-label="Find in book" value={readerSearch} onChange={e => setReaderSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') readerFindRef.current() }}/><kbd>↵</kbd></label> : <>{page !== 'settings' && <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/ >}{page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ F' : 'Ctrl+F'}</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}</>}
       </div>
       <div className="top-actions">
-        {page === 'device' && device && <button className="toolbar-button" title="Refresh Kindle contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}
-        {page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy || transferActive}><Plus size={17}/><span>Import books</span></button>}
+        {readerOpen && previewTarget ? <button className="toolbar-button" title="Close reader" onClick={() => { setReaderOpen(false); setPreviewTarget(null); setBookPreview(null) }}><X size={16}/><span>Close</span></button> : <>{page === 'device' && device && <button className="toolbar-button" title="Refresh reader contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}{page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy || transferActive}><Plus size={17}/><span>Import books</span></button>}</>}
       </div>
     </header>
 
-    <main className="main-panel" style={{ '--book-scale': bookSize / 100 } as React.CSSProperties} data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (page !== 'library' && page !== 'recent' && page !== 'device') return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
-      {page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} onImportCalibre={() => void importCalibreLibrary()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
+    <main className="main-panel" style={{ '--book-scale': bookSize / 100 } as React.CSSProperties} data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (readerOpen || (page !== 'library' && page !== 'recent' && page !== 'device')) return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
+      {readerOpen && previewTarget ? <ReaderView book={bookPreview?.book ?? previewTarget} preview={bookPreview} loading={previewLoading} error={previewError} chapterIndex={previewChapter} setChapterIndex={setPreviewChapter} search={readerSearch} findRef={readerFindRef} turnRef={readerTurnRef}/> : page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} onImportCalibre={() => void importCalibreLibrary()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
@@ -622,7 +639,6 @@ export default function App() {
         <section className="content-heading">
           <div className="library-toolbar">
             {isDevice && <span className="book-count">{`${visibleDeviceBooks.length} ${visibleDeviceBooks.length === 1 ? 'book' : 'books'}`}</span>}
-            {page === 'recent' && <span className="recent-window-caption">Last 30 days</span>}
             <FilterPicker authorFilter={authorFilter} genreFilter={genreFilter} languageFilter={languageFilter} metadata={metadata} setAuthorFilter={setAuthorFilter} setGenreFilter={setGenreFilter} setLanguageFilter={setLanguageFilter}/>
             {page !== 'recent' &&
               <div className="sort-select" title="Sort books"><ArrowDownUp size={15}/><DropdownSelect label="Sort books" value={sort} onChange={value => setSort(value as Sort)} options={[{ value: 'recent', label: isDevice ? 'Device order' : 'Recently added' }, { value: 'title', label: 'Title' }, { value: 'author', label: 'Author' }]}/></div>
@@ -649,6 +665,7 @@ export default function App() {
                 </div>
               </section> })}
             </section>)}
+            <p className="recent-history-note">Entries older than 30 days aren’t shown.</p>
           </div> : <div className={`book-collection ${layout === 'list' ? 'list-layout' : ''}`}>
             {books.map(book => renderBook(book, layout))}
           </div> : <EmptyState recent={page === 'recent'} searching={!!query || hasFilters} onImport={() => void beginImport()} onClear={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}/ >}
@@ -658,7 +675,6 @@ export default function App() {
     {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)} onChangeCover={() => void changeCover(focusedBook)} coverDisabled={busy || transferActive || changingLibrary}/></div>}
     {bridge.preview && <input hidden type="file" ref={coverInputRef} accept="image/jpeg,image/png,.jpg,.jpeg,.png" aria-label="Choose cover image" onChange={e => { const file = e.currentTarget.files?.[0]; const book = coverTarget.current; e.currentTarget.value = ''; coverTarget.current = null; if (file && book) void changeCover(book, file) }}/ >}
     {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
-    {previewTarget && <BookPreviewDialog book={bookPreview?.book ?? previewTarget} preview={bookPreview} loading={previewLoading} error={previewError} chapterIndex={previewChapter} setChapterIndex={setPreviewChapter} onClose={() => { setPreviewTarget(null); setBookPreview(null) }}/>}
     {pasteMenu && <div className="book-context-menu paste-context-menu" style={{ left: pasteMenu.left, top: pasteMenu.top }} role="menu" onContextMenu={e => e.preventDefault()}><button role="menuitem" onClick={() => { setPasteMenu(null); pasteFilesRef.current() }}><span className="menu-item-icon"><Upload size={16}/></span>Paste books <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘V' : 'Ctrl+V'}</kbd></button></div>}
     {intake && <IntakeDialog request={intake} onCancel={() => setIntake(null)} onImportOnly={() => void confirmIntake('library')} onSend={() => void confirmIntake('send')}/>}
     {confirmation && <ConfirmDialog confirmation={confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const action = confirmation.action; setConfirmation(null); action() }}/>}
@@ -674,7 +690,7 @@ function BookTile({ book, layout, selected, menu, onMenu, onMenuClose, canSend, 
     </button>
     <div className="book-menu-anchor" data-book-menu><button className="tile-more" title={`Actions for ${book.title}`} aria-label={`Actions for ${book.title}`} aria-haspopup="menu" aria-expanded={!!menu} onClick={e => { e.stopPropagation(); onMenu(e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
     <button className={`select-hit ${selected ? 'checked' : ''}`} aria-label={`${selected ? 'Deselect' : 'Select'} ${book.title}`} aria-pressed={selected} onClick={onToggle}>{selected && <Check size={12}/>}</button>
-    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'Read preview', icon: <BookOpen/>, onSelect: onPreview }, { label: 'Edit details', icon: <Pencil/>, onSelect: onEdit }, { label: deviceMenuLabel(canSend, sendLabel), icon: <Send/>, onSelect: onSend, disabled: !canSend }, { label: 'Remove from library', icon: <Trash2/>, onSelect: onDelete, danger: true }]}/>}
+    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'Read', icon: <BookOpen/>, onSelect: onPreview }, { label: 'Edit details', icon: <Pencil/>, onSelect: onEdit }, { label: deviceMenuLabel(canSend, sendLabel), icon: <Send/>, onSelect: onSend, disabled: !canSend }, { label: 'Remove from library', icon: <Trash2/>, onSelect: onDelete, danger: true }]}/>}
   </article>
 }
 
@@ -729,24 +745,333 @@ function languageLabel(code: string) {
   catch { return code }
 }
 
-function BookPreviewDialog({ book, preview, loading, error, chapterIndex, setChapterIndex, onClose }: { book: Book; preview: BookPreview | null; loading: boolean; error: string; chapterIndex: number; setChapterIndex: (index: number) => void; onClose: () => void }) {
+function readerSetting(key: string, fallback: string) {
+  try { return localStorage.getItem(key) || fallback } catch { return fallback }
+}
+
+const readerPreviewParagraphs = [
+  'The rain had stopped just before first light. Water clung to the garden wall, turning every stone dark and bright at once, while the old house listened to the quiet as if it had been waiting all night for the world to speak again.',
+  'Mara found the book where she had left it: open on the kitchen table, its pages held down by a smooth river stone. She could not remember bringing the stone inside. It was warm in her palm, though the morning air still carried the chill of the storm.',
+  'A narrow line of ink crossed the page beneath the last sentence. It had not been there yesterday. The letters leaned toward the edge of the paper, pointing west, toward the hills she could see only when the clouds lifted.',
+  'She read the sentence twice. Beyond the orchard, where the old footpath disappeared beneath bracken, a bell was ringing. No one in the village owned a bell like that. No one, as far as she knew, had heard it in years.',
+  'Mara pulled on her coat and filled a small flask at the tap. She packed an apple, a pencil, and the folded map from the drawer. The book stayed open on the table. Its pages stirred when she passed, although every window was shut.',
+  'At the edge of the orchard she stopped to look back. The house stood quiet among its apple trees, its windows pale with reflected sky. For a moment she felt the familiar tug of turning home, of putting the kettle on and deciding the bell had been nothing.',
+  'Then it rang again. The sound came from the ridge, clear and patient, and the book in her bag seemed to grow heavier. She stepped through the gap in the wall and followed the path into the woods.',
+  'The first mile was easy. Rain had softened the ground but not washed the track away. Ferns brushed her sleeves, and the trees opened now and then to show a strip of silver sky. She kept the map folded in one hand.',
+  'At the stream the path split. One branch crossed a wooden bridge; the other wound between two standing stones. The map showed neither. Mara took out the book and found a small drawing in its margin: two stones, a stream, and a mark like a star.',
+  'She crossed the bridge. On the far bank, the woods changed. The trees grew farther apart, and their trunks carried shallow carvings filled with pale moss. Each mark resembled a letter, but none belonged to any alphabet she knew.',
+  'By midday the clouds had broken into long bright ribbons. Mara sat beneath an ash tree and ate her apple. She wrote down what she had seen, including the bell, the stones, and the sentence in the book. Writing made the day feel ordinary again.',
+  'When she opened the book to check the map, a second line had appeared below the first. It named a place: the house with the blue door. Mara knew it from the village stories, though no one agreed where it stood.',
+  'The bell rang from somewhere ahead. This time there was an answer, a faint chime from behind her. She turned, but the trail was empty. The trees shifted in the wind and the light changed across the moss.',
+  'She continued toward the ridge, counting each turn and marking the map. A good map, her father used to say, was less a picture of the world than a record of the choices you had made inside it.',
+  'At the top, she found a low stone wall and a gate that opened onto a field. Beyond it stood a small house with a blue door. Smoke curled from its chimney, though the roof was furred with ivy and the windows looked dark.',
+  'Mara reached for the latch. The book opened by itself to a clean white page. She waited for new ink, but nothing appeared. Then someone inside the house laughed, and the door swung inward.',
+]
+
+function ReaderView({ book, preview, loading, error, chapterIndex, setChapterIndex, search, findRef, turnRef }: { book: Book; preview: BookPreview | null; loading: boolean; error: string; chapterIndex: number; setChapterIndex: (index: number) => void; search: string; findRef: React.MutableRefObject<() => void>; turnRef: React.MutableRefObject<(direction: -1 | 1) => void> }) {
   const chapters = preview?.chapters ?? []
   const active = chapters[chapterIndex]
+  const frame = useRef<HTMLIFrameElement>(null)
+  const panel = useRef<HTMLElement>(null)
+  const suppressPageClickUntil = useRef(0)
+  const wheelGesture = useRef({ total: 0, direction: 0, turned: false, lastAt: 0 })
+  const pagination = useRef<ReaderPagination | null>(null)
+  const loadedDocument = useRef<Document | null>(null)
+  const pendingChapterPosition = useRef<number | null>(null)
+  const [frameVersion, setFrameVersion] = useState(0)
+  const saveTimer = useRef<number | undefined>(undefined)
+  const [tocOpen, setTocOpen] = useState(true)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [chromeVisible, setChromeVisible] = useState(true)
+  const chromeTimer = useRef<number | undefined>(undefined)
+  const chromeHovered = useRef(false)
+  const [progress, setProgress] = useState({ chapterIndex: 0, position: 0 })
+  const [savedPosition, setSavedPosition] = useState(0)
+  const [bookmarks, setBookmarks] = useState<import('./types').ReadingBookmark[]>([])
+  const [tocTab, setTocTab] = useState<'contents' | 'bookmarks'>('contents')
+  const [font, setFont] = useState(() => readerSetting('attune.reader.font', 'serif'))
+  const [fontSize, setFontSize] = useState(() => Math.min(30, Math.max(14, Number(readerSetting('attune.reader.size', '19')) || 19)))
+  const [lineHeight, setLineHeight] = useState(() => Math.min(2.4, Math.max(1.3, Number(readerSetting('attune.reader.spacing', '1.8')) || 1.8)))
+  const [textMenuOpen, setTextMenuOpen] = useState(false)
+  const [textMenuPosition, setTextMenuPosition] = useState({ left: 0, top: 0 })
+  const textMenuTrigger = useRef<HTMLButtonElement>(null)
+  const textMenuPanel = useRef<HTMLDivElement>(null)
+  const [theme, setTheme] = useState(() => readerSetting('attune.reader.theme', 'light'))
+  const [layout, setLayout] = useState(() => readerSetting('attune.reader.layout', 'single'))
+  const [sidePadding, setSidePadding] = useState(() => Math.min(96, Math.max(24, Number(readerSetting('attune.reader.padding', '48')) || 48)))
   const safeHref = active?.href.startsWith('/preview/') && !active.href.startsWith('//') ? active.href : ''
-  const previewHtml = bridge.preview ? `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font:17px/1.8 Georgia,serif;max-width:620px;margin:50px auto;padding:0 28px;color:#34343a}h1{font:600 27px/1.25 Georgia,serif}p{margin:1.1em 0}</style></head><body><h1>${escapeHTML(active?.title ?? 'A quiet beginning')}</h1><p>The rain had stopped just before the first light touched the windows. In the stillness, the old house seemed to be listening.</p><p>${escapeHTML(book.title)} waited on the table, its pages holding a map to somewhere the narrator had not yet learned to name.</p><p>Outside, a bird called once from the garden. Then the day began.</p></body></html>` : undefined
+  const previewHtml = bridge.preview ? `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font:19px/1.8 Georgia,serif;max-width:620px;margin:50px auto;padding:0 28px;color:#34343a}h1{font:600 27px/1.25 Georgia,serif}p{margin:1.1em 0}</style></head><body><h1>${escapeHTML(active?.title ?? 'A quiet beginning')}</h1>${readerPreviewParagraphs.map(paragraph => `<p>${escapeHTML(paragraph)}</p>`).join('')}<p>${escapeHTML(book.title)} stayed with her as the path curved toward the ridge. What waited beyond it would have to become a story of its own.</p></body></html>` : undefined
+  const positionInFrame = (documentRef = frame.current?.contentDocument) => {
+    const doc = documentRef, scroller = doc?.scrollingElement
+    if (!doc || !scroller) return 0
+    if (pagination.current?.doc === doc) return pagination.current.position()
+    return Math.max(0, Math.min(1, scroller.scrollTop / Math.max(1, scroller.scrollHeight - doc.documentElement.clientHeight)))
+  }
+  const save = (index = chapterIndex, position = positionInFrame()) => {
+    setProgress({ chapterIndex: index, position })
+    window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => { void bridge.saveReadingProgress(book.id, index, position).catch(() => {}) }, 500)
+  }
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-  return <div className="preview-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
-    <section className="preview-dialog" role="dialog" aria-modal="true" aria-label={`Preview ${book.title}`}>
-      <header className="preview-header"><div><div className="eyebrow">BOOK PREVIEW</div><h2>{book.title}</h2><span>{book.authors.join(', ') || 'Unknown author'} · {book.language ? languageLabel(book.language) : 'Language unknown'}</span></div><button className="icon-button" onClick={onClose} aria-label="Close preview"><X size={18}/></button></header>
-      <div className="preview-layout"><nav className="chapter-nav" aria-label="Chapters"><strong>Contents</strong>{chapters.map((chapter, index) => <button key={chapter.id} className={index === chapterIndex ? 'active' : ''} onClick={() => setChapterIndex(index)}>{chapter.title || `Chapter ${index + 1}`}</button>)}</nav>
-        <div className="preview-reader">{loading ? <div className="preview-message"><LoaderCircle className="spinning"/>Loading preview…</div> : error ? <div className="preview-message preview-error"><AlertCircle/>{error}</div> : !active ? <div className="preview-message">No preview chapters are available.</div> : <div className="preview-page"><iframe title={`${book.title}: ${active.title}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" src={bridge.preview ? undefined : safeHref || undefined} srcDoc={previewHtml} /></div>}</div>
-      </div>
-    </section>
-  </div>
+    let live = true
+    void bridge.getReadingProgress(book.id).then(saved => { if (live) { setProgress(saved); if (saved.chapterIndex === chapterIndex) setSavedPosition(saved.position) } }).catch(() => {})
+    void bridge.getReadingBookmarks(book.id).then(items => { if (live) setBookmarks(items) }).catch(() => {})
+    return () => { live = false; window.clearTimeout(saveTimer.current) }
+  }, [book.id])
+  useEffect(() => {
+    const onFullscreen = () => setFullscreen(document.fullscreenElement === panel.current)
+    document.addEventListener('fullscreenchange', onFullscreen)
+    return () => document.removeEventListener('fullscreenchange', onFullscreen)
+  }, [])
+  useEffect(() => {
+    if (!textMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement
+      if (textMenuTrigger.current?.contains(target) || textMenuPanel.current?.contains(target) || target.closest('.dropdown-select-menu')) return
+      setTextMenuOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('.dropdown-select-menu')) { event.preventDefault(); event.stopPropagation(); setTextMenuOpen(false) }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKeyDown) }
+  }, [textMenuOpen])
+  useEffect(() => {
+    window.clearTimeout(chromeTimer.current)
+    if (!fullscreen) { setChromeVisible(true); return }
+    setChromeVisible(false)
+    const onMove = (event: PointerEvent) => {
+      if (event.clientY > 76) return
+      setChromeVisible(true)
+      window.clearTimeout(chromeTimer.current)
+      if (!chromeHovered.current) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 1800)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => { window.removeEventListener('pointermove', onMove); window.clearTimeout(chromeTimer.current) }
+  }, [fullscreen])
+  useEffect(() => {
+    try { localStorage.setItem('attune.reader.font', font); localStorage.setItem('attune.reader.size', String(fontSize)); localStorage.setItem('attune.reader.spacing', String(lineHeight)); localStorage.setItem('attune.reader.theme', theme); localStorage.setItem('attune.reader.layout', layout); localStorage.setItem('attune.reader.padding', String(sidePadding)) } catch { /* Current controls remain available for the session. */ }
+  }, [font, fontSize, lineHeight, theme, layout, sidePadding])
+  const applyReaderStyles = (restorePosition?: number) => {
+    const doc = frame.current?.contentDocument
+    if (!doc?.head || !doc.body || doc !== loadedDocument.current) return
+    const position = restorePosition ?? positionInFrame(doc)
+    doc.body.style.removeProperty('transform')
+    doc.body.style.removeProperty('transition')
+    doc.getElementById('attune-reader-style')?.remove()
+    const style = doc.createElement('style')
+    style.id = 'attune-reader-style'
+    const colors = theme === 'dark' ? ['#1c1d20', '#e9e6df', '#a6baff'] : theme === 'sepia' ? ['#f2eadb', '#40372c', '#715e48'] : theme === 'gray' ? ['#bcbcbc', '#303030', '#4e4e4e'] : theme === 'charcoal' ? ['#303030', '#ededed', '#c2c2c2'] : ['#fff', '#2d2d31', '#4667bb']
+    const families: Record<string, string> = { serif: 'Georgia, "Times New Roman", serif', book: 'Palatino, "Book Antiqua", serif', sans: 'system-ui, -apple-system, sans-serif', mono: 'ui-monospace, monospace' }
+    const paged = layout !== 'continuous'
+    const spread = layout === 'two-page'
+    const padding = Math.min(sidePadding, doc.documentElement.clientWidth / (spread ? 8 : 4))
+    // Each column plus its gutter is exactly one leaf; a spread always advances one viewport.
+    const pageRules = paged ? `html{height:100%!important;overflow:hidden!important;touch-action:pan-y}body{box-sizing:border-box!important;height:100vh!important;width:100%!important;min-width:0!important;max-width:none!important;margin:0!important;padding:24px ${padding}px!important;column-count:${spread ? 2 : 1}!important;column-width:auto!important;column-gap:${padding * 2}px!important;column-fill:auto!important;overflow:visible!important;direction:ltr!important;writing-mode:horizontal-tb!important;}` : `html{height:auto;overflow-y:auto!important;overflow-x:hidden!important}body{box-sizing:border-box!important;width:auto!important;max-width:680px!important;height:auto!important;margin:0 auto!important;padding:52px ${sidePadding}px 72px!important;column-count:auto!important;column-width:auto!important;column-gap:normal!important;}`
+    style.textContent = `html,body{background:${colors[0]}!important;color:${colors[1]}!important}body,body *{font-family:${families[font]}!important;color:${colors[1]}!important}body{font-size:${fontSize}px!important;line-height:${lineHeight}!important}${pageRules}p,li,blockquote{line-height:${lineHeight}!important}a{color:${colors[2]}!important}img,svg,video{max-width:100%;max-height:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}`
+    doc.head.appendChild(style)
+    if (paged) pagination.current = createReaderPagination(doc, spread ? 2 : 1, padding, position)
+    else {
+      pagination.current = null
+      doc.scrollingElement?.scrollTo(0, position * Math.max(0, doc.scrollingElement.scrollHeight - doc.documentElement.clientHeight))
+    }
+  }
+  useEffect(() => {
+    applyReaderStyles()
+    const iframe = frame.current
+    if (!iframe) return
+    const observer = new ResizeObserver(() => applyReaderStyles())
+    observer.observe(iframe)
+    const doc = iframe.contentDocument
+    let live = true
+    void doc?.fonts.ready.then(() => { if (live) applyReaderStyles() })
+    const onImageLoad = (event: Event) => { if ((event.target as Element | null)?.tagName === 'IMG') applyReaderStyles() }
+    doc?.addEventListener('load', onImageLoad, true)
+    return () => { live = false; observer.disconnect(); doc?.removeEventListener('load', onImageLoad, true) }
+  }, [frameVersion, font, fontSize, lineHeight, theme, loading, layout, sidePadding])
+  useEffect(() => {
+    const doc = frame.current?.contentDocument, scroller = doc?.scrollingElement
+    if (!doc || !scroller || loading || doc !== loadedDocument.current) return
+    const onScroll = () => save(chapterIndex, positionInFrame())
+    doc.addEventListener('scroll', onScroll, { passive: true })
+    const initialPagination = pagination.current
+    return () => {
+      doc.removeEventListener('scroll', onScroll)
+      const position = pagination.current?.doc === doc ? pagination.current.position() : initialPagination?.doc === doc ? initialPagination.position() : positionInFrame(doc)
+      window.clearTimeout(saveTimer.current)
+      void bridge.saveReadingProgress(book.id, chapterIndex, position).catch(() => {})
+    }
+  }, [frameVersion, chapterIndex, book.id, loading])
+  useEffect(() => {
+    const doc = frame.current?.contentDocument
+    if (!doc || progress.chapterIndex !== chapterIndex) return
+    if (pagination.current?.doc === doc) pagination.current.goTo(Math.round(savedPosition * (pagination.current.count - 1)), false)
+    else if (doc.scrollingElement) doc.scrollingElement.scrollTop = savedPosition * Math.max(0, doc.scrollingElement.scrollHeight - doc.documentElement.clientHeight)
+  }, [savedPosition, frameVersion])
+  const turnPage = (direction: -1 | 1) => {
+    const doc = frame.current?.contentDocument, scroller = doc?.scrollingElement
+    if (!doc || !scroller) return
+    const pages = pagination.current
+    if (pages?.doc === doc) {
+      const next = pages.index + direction
+      if (next >= 0 && next < pages.count) { pages.goTo(next); save(); return }
+      const chapter = chapterIndex + direction
+      if (chapter >= 0 && chapter < chapters.length) { pendingChapterPosition.current = direction < 0 ? 1 : 0; setChapterIndex(chapter) }
+      return
+    }
+    const offset = scroller.scrollTop
+    const max = scroller.scrollHeight - doc.documentElement.clientHeight
+    const atEdge = direction < 0 ? offset <= 2 : offset >= max - 2
+    if (atEdge) { if (direction < 0 && chapterIndex > 0) setChapterIndex(chapterIndex - 1); else if (direction > 0 && chapterIndex < chapters.length - 1) setChapterIndex(chapterIndex + 1); return }
+    scroller.scrollBy({ top: direction * doc.documentElement.clientHeight, behavior: 'smooth' })
+  }
+  turnRef.current = turnPage
+  useEffect(() => {
+    const doc = frame.current?.contentDocument
+    if (!doc) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault()
+        turnRef.current(event.key === 'ArrowLeft' ? -1 : 1)
+      }
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      if (!fullscreen || event.clientY > 68) return
+      setChromeVisible(true)
+      window.clearTimeout(chromeTimer.current)
+      if (!chromeHovered.current) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 1800)
+    }
+    doc.addEventListener('keydown', onKeyDown)
+    doc.addEventListener('pointermove', onPointerMove)
+    return () => { doc.removeEventListener('keydown', onKeyDown); doc.removeEventListener('pointermove', onPointerMove) }
+  }, [frameVersion, loading, turnRef, fullscreen, layout])
+  useEffect(() => {
+    if (layout === 'continuous' || loading) return
+    const doc = frame.current?.contentDocument
+    if (!doc) return
+    let startX: number | null = null
+    let startY = 0
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || (event.target as HTMLElement | null)?.closest('a,button,input,select,textarea,video')) return
+      startX = event.clientX
+      startY = event.clientY
+    }
+    const onPointerUp = (event: PointerEvent) => {
+      if (startX === null) return
+      const deltaX = event.clientX - startX
+      const deltaY = event.clientY - startY
+      startX = null
+      if (Math.abs(deltaX) >= 64 && Math.abs(deltaX) > Math.abs(deltaY) * 1.3) {
+        suppressPageClickUntil.current = Date.now() + 350
+        doc.getSelection()?.removeAllRanges()
+        turnRef.current(deltaX < 0 ? 1 : -1)
+      }
+    }
+    const onPointerCancel = () => { startX = null }
+    const onClick = (event: MouseEvent) => {
+      if (Date.now() < suppressPageClickUntil.current) { event.preventDefault(); return }
+      const target = event.target as HTMLElement | null
+      if (target?.closest('a,button,input,select,textarea,video') || doc.getSelection()?.toString()) return
+      turnRef.current(event.clientX < doc.documentElement.clientWidth / 2 ? -1 : 1)
+    }
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return
+      event.preventDefault()
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+      const direction = Math.sign(delta)
+      const now = Date.now()
+      const gesture = wheelGesture.current
+      if (now - gesture.lastAt > 200 || direction !== gesture.direction) { gesture.total = 0; gesture.turned = false }
+      gesture.lastAt = now
+      gesture.direction = direction
+      gesture.total += Math.abs(delta) * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? doc.documentElement.clientHeight : 1)
+      if (!gesture.turned && gesture.total >= 32 && direction) { gesture.turned = true; turnRef.current(direction > 0 ? 1 : -1) }
+    }
+    doc.addEventListener('pointerdown', onPointerDown)
+    doc.addEventListener('pointerup', onPointerUp)
+    doc.addEventListener('pointercancel', onPointerCancel)
+    doc.addEventListener('click', onClick)
+    doc.addEventListener('wheel', onWheel, { passive: false })
+    return () => { doc.removeEventListener('pointerdown', onPointerDown); doc.removeEventListener('pointerup', onPointerUp); doc.removeEventListener('pointercancel', onPointerCancel); doc.removeEventListener('click', onClick); doc.removeEventListener('wheel', onWheel) }
+  }, [frameVersion, loading, layout, turnRef])
+  const addBookmark = async () => {
+    if (!active) return
+    const position = positionInFrame()
+    try {
+      const bookmark = await bridge.addReadingBookmark(book.id, chapterIndex, position)
+      setBookmarks(items => [bookmark, ...items])
+      setTocTab('bookmarks')
+    } catch { /* Keep the reader usable if bookmark storage fails. */ }
+  }
+  const openBookmark = (bookmark: import('./types').ReadingBookmark) => {
+    setChapterIndex(bookmark.chapterIndex)
+    setSavedPosition(bookmark.position)
+    setProgress({ chapterIndex: bookmark.chapterIndex, position: bookmark.position })
+    void bridge.saveReadingProgress(book.id, bookmark.chapterIndex, bookmark.position).catch(() => {})
+  }
+  useEffect(() => {
+    findRef.current = () => {
+      const doc = frame.current?.contentDocument
+      const needle = search.trim().toLocaleLowerCase()
+      if (!doc?.body || !needle) return
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT)
+      const nodes: Text[] = []
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text
+        if (!node.parentElement?.closest('script,style,noscript')) nodes.push(node)
+      }
+      const selection = doc.getSelection()
+      let startIndex = 0
+      let startOffset = 0
+      if (selection && !selection.isCollapsed && selection.toString().toLocaleLowerCase() === needle) {
+        const index = nodes.indexOf(selection.focusNode as Text)
+        if (index >= 0) { startIndex = index; startOffset = selection.focusOffset }
+      }
+      for (let pass = 0; pass < 2; pass++) {
+        for (let index = pass ? 0 : startIndex; index < (pass ? startIndex + 1 : nodes.length); index++) {
+          const node = nodes[index]
+          const text = node.nodeValue ?? ''
+          const offset = pass ? 0 : index === startIndex ? startOffset : 0
+          const found = text.toLocaleLowerCase().indexOf(needle, offset)
+          if (found < 0) continue
+          const range = doc.createRange()
+          range.setStart(node, found)
+          range.setEnd(node, found + search.trim().length)
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+          const pages = pagination.current
+          if (pages?.doc === doc) {
+            const x = range.getBoundingClientRect().left + pages.index * pages.width
+            pages.goTo(Math.floor(x / pages.width))
+            save()
+          } else node.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          return
+        }
+      }
+    }
+  }, [search, findRef, active?.href])
+  const onFrameLoad = () => {
+    loadedDocument.current = frame.current?.contentDocument ?? null
+    const position = pendingChapterPosition.current ?? (progress.chapterIndex === chapterIndex ? savedPosition : 0)
+    pendingChapterPosition.current = null
+    applyReaderStyles(position)
+    setSavedPosition(position)
+    setFrameVersion(version => version + 1)
+    setProgress({ chapterIndex, position: positionInFrame() })
+  }
+  const percent = progress.chapterIndex === chapterIndex ? Math.round(progress.position * 100) : 0
+  return <section ref={panel} className={`reader-view reader-theme-${theme} ${fullscreen ? 'reader-fullscreen' : ''}`} aria-label={`Reading ${book.title}`} onPointerMove={event => { if (fullscreen && event.clientY <= 76) { setChromeVisible(true); window.clearTimeout(chromeTimer.current); if (!chromeHovered.current) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 1800) } }}>
+    {fullscreen && <div className="reader-chrome-reveal" aria-hidden="true" onPointerEnter={() => { setChromeVisible(true); window.clearTimeout(chromeTimer.current); chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 1800) }}/>}
+    <div className={`reader-subbar ${fullscreen ? 'fullscreen-chrome' : ''} ${chromeVisible ? 'chrome-visible' : ''}`} onPointerEnter={() => { chromeHovered.current = true; window.clearTimeout(chromeTimer.current); if (fullscreen) setChromeVisible(true) }} onPointerLeave={() => { chromeHovered.current = false; if (fullscreen) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 700) }}><button className="icon-button" aria-label={tocOpen ? 'Hide reader sidebar' : 'Show reader sidebar'} title="Contents and bookmarks" onClick={() => setTocOpen(open => !open)}>{tocOpen ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button><span className="reader-chapter-title">{active?.title || 'Contents'}</span><div className="reader-controls"><div className="reader-layout-switch" role="group" aria-label="Reading layout"><button className={`icon-button ${layout === 'continuous' ? 'selected' : ''}`} aria-label="Continuous layout" title="Continuous layout" aria-pressed={layout === 'continuous'} onClick={() => setLayout('continuous')}><AlignLeft size={16}/></button><button className={`icon-button ${layout === 'single' ? 'selected' : ''}`} aria-label="Single-page layout" title="Single-page layout" aria-pressed={layout === 'single'} onClick={() => setLayout('single')}><BookOpen size={16}/></button><button className={`icon-button ${layout === 'two-page' ? 'selected' : ''}`} aria-label="Two-page layout" title="Two-page layout" aria-pressed={layout === 'two-page'} onClick={() => setLayout('two-page')}><Columns2 size={16}/></button></div><button className="icon-button" title="Add bookmark" aria-label="Add bookmark" onClick={() => void addBookmark()}><BookmarkPlus size={16}/></button><div className="reader-text-menu"><button ref={textMenuTrigger} type="button" className="reader-dropdown reader-text-trigger" aria-label="Text settings" aria-haspopup="dialog" aria-expanded={textMenuOpen} onClick={event => { if (textMenuOpen) { setTextMenuOpen(false); return }; const rect = event.currentTarget.getBoundingClientRect(); setTextMenuPosition({ left: Math.max(8, Math.min(window.innerWidth - 296, rect.right - 280)), top: Math.max(8, Math.min(window.innerHeight - 292, rect.bottom + 8)) }); setTextMenuOpen(true) }}><Type size={15}/><span>Text</span><ChevronDown size={14}/></button>{textMenuOpen && createPortal(<div ref={textMenuPanel} className={`reader-text-menu-panel reader-theme-${theme}`} role="dialog" aria-label="Text settings" style={{ left: textMenuPosition.left, top: textMenuPosition.top }}><label className="reader-text-control"><span>Font size <output>{fontSize}px</output></span><input aria-label="Font size" type="range" min="14" max="30" step="1" value={fontSize} style={{ '--range-progress': `${((fontSize - 14) / 16) * 100}%` } as CSSProperties} onChange={e => setFontSize(Number(e.target.value))}/></label><div className="reader-text-family"><span>Font family</span><div className="reader-dropdown"><DropdownSelect label="Typeface" value={font} onChange={setFont} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'serif', label: 'Serif' }, { value: 'book', label: 'Book' }, { value: 'sans', label: 'Sans' }, { value: 'mono', label: 'Mono' }]}/></div></div><label className="reader-text-control"><span>Line spacing <output>{lineHeight.toFixed(1)}×</output></span><input aria-label="Line spacing" type="range" min="1.3" max="2.4" step="0.1" value={lineHeight} style={{ '--range-progress': `${((lineHeight - 1.3) / 1.1) * 100}%` } as CSSProperties} onChange={e => setLineHeight(Number(e.target.value))}/></label><label className="reader-text-control"><span>Text padding <output>{sidePadding}px</output></span><input aria-label="Text side padding" type="range" min="24" max="96" step="4" value={sidePadding} style={{ '--range-progress': `${((sidePadding - 24) / 72) * 100}%` } as CSSProperties} onChange={e => setSidePadding(Number(e.target.value))}/></label></div>, fullscreen && panel.current ? panel.current : document.body)}</div><div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'dark', label: 'Dark' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }]}/></div><button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button></div></div>
+    <div className={`reader-layout ${tocOpen ? '' : 'toc-hidden'}`}>
+      {tocOpen && <nav className="reader-toc" aria-label="Reader navigation"><div className="reader-toc-tabs"><button className={tocTab === 'contents' ? 'active' : ''} onClick={() => setTocTab('contents')}>Contents</button><button className={tocTab === 'bookmarks' ? 'active' : ''} onClick={() => setTocTab('bookmarks')}>Bookmarks {bookmarks.length > 0 && <span>{bookmarks.length}</span>}</button></div>{tocTab === 'contents' ? chapters.map((chapter, index) => <button key={chapter.id} className={index === chapterIndex ? 'active' : ''} onClick={() => setChapterIndex(index)}>{chapter.title || `Chapter ${index + 1}`}</button>) : bookmarks.length ? bookmarks.map(item => <div className="reader-bookmark" key={item.id}><button onClick={() => openBookmark(item)}><Bookmark size={14}/><span>{chapters[item.chapterIndex]?.title || `Chapter ${item.chapterIndex + 1}`}<small>{Math.round(item.position * 100)}%</small></span></button><button className="reader-bookmark-delete" aria-label="Delete bookmark" title="Delete bookmark" onClick={() => { void bridge.deleteReadingBookmark(book.id, item.id).then(() => setBookmarks(items => items.filter(candidate => candidate.id !== item.id))).catch(() => {}) }}><Trash size={14}/></button></div>) : <p className="reader-empty-bookmarks">No bookmarks yet. Add one from the toolbar while reading.</p>}</nav>}
+      <div className={`reader-content reader-content-${layout}`} onClick={event => { if (layout === 'continuous' || (event.target as HTMLElement).closest('button')) return; const bounds = event.currentTarget.getBoundingClientRect(); turnPage(event.clientX < bounds.left + bounds.width / 2 ? -1 : 1) }}>{loading ? <div className="preview-message"><LoaderCircle className="spinning"/>Opening book…</div> : error ? <div className="preview-message preview-error"><AlertCircle/>{error}</div> : !active ? <div className="preview-message">No readable chapters found.</div> : <iframe key={active.href} ref={frame} title={`${book.title}: ${active.title}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" src={bridge.preview ? undefined : safeHref || undefined} srcDoc={previewHtml} style={{ width: layout === 'two-page' ? 'min(1280px, 100%)' : layout === 'single' ? 'min(760px, 100%)' : '100%' }} onLoad={onFrameLoad}/ >}{layout !== 'continuous' && !loading && !error && active && <><button className="reader-page-turn reader-page-turn-prev" aria-label="Previous page" title="Previous page" onClick={() => turnPage(-1)}><ChevronLeft size={21}/></button><button className="reader-page-turn reader-page-turn-next" aria-label="Next page" title="Next page" onClick={() => turnPage(1)}><ChevronRight size={21}/></button></>}</div>
+    </div>
+    <div className="reader-progress"><span style={{ width: `${(chapterIndex + percent / 100) / Math.max(1, chapters.length) * 100}%` }}/></div>
+  </section>
 }
 function escapeHTML(value: string) { return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!) ) }
 
@@ -761,7 +1086,7 @@ function DeviceList({ deviceBooks, layout, hasBooks, searching, loading, error, 
     {deviceBooks.map(book => <div role="listitem" className={`device-book ${selection.includes(book.path) ? 'row-selected' : ''}`} key={book.path}>
       <button className={`device-check ${selection.includes(book.path) ? 'checked' : ''}`} onClick={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} aria-label={`Select ${book.title || fileTitle(book.name)}`} aria-pressed={selection.includes(book.path)}>{selection.includes(book.path) && <Check size={13}/>}</button>
       <div className="device-book-icon"><BookOpen size={17}/></div><div className="device-book-copy"><button onClick={() => onOpen(book)}>{book.title || fileTitle(book.name)}</button><span>{extensionFromPath(book.path)} · {fmtBytes(book.size)}</span></div><span className="device-book-status">On Kindle</span><div className="book-menu-anchor" data-book-menu><button className="tile-more" aria-label={`Actions for ${book.title || fileTitle(book.name)}`} aria-haspopup="menu" aria-expanded={menu?.key === `device:${book.path}`} onClick={e => { e.stopPropagation(); onMenu(`device:${book.path}`, e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
-      {menu?.key === `device:${book.path}` && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: () => onOpen(book) }, { label: 'Read preview', icon: <BookOpen/>, onSelect: () => onPreview(book.bookID), disabled: !book.bookID }, { label: 'Remove from Kindle', icon: <Trash2/>, onSelect: () => onRemove(book.path), danger: true }]}/>}
+      {menu?.key === `device:${book.path}` && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: () => onOpen(book) }, { label: 'Read', icon: <BookOpen/>, onSelect: () => onPreview(book.bookID), disabled: !book.bookID }, { label: 'Remove from Kindle', icon: <Trash2/>, onSelect: () => onRemove(book.path), danger: true }]}/>}
     </div>)}
   </div>}</>
 }
@@ -777,7 +1102,7 @@ function DeviceTile({ book, selected, menu, onMenu, onMenuClose, onPreview, onRe
     <span className="book-meta"><strong title={title}>{title}</strong><span title={(book.authors ?? []).join(', ')}>{book.authors?.join(', ') || 'Unknown author'}</span></span></button>
     <div className="book-menu-anchor" data-book-menu><button className="tile-more" aria-label={`Actions for ${title}`} aria-haspopup="menu" aria-expanded={!!menu} onClick={e => { e.stopPropagation(); onMenu(e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
     <button className={`select-hit ${selected ? 'checked' : ''}`} aria-label={`${selected ? 'Deselect' : 'Select'} ${title}`} aria-pressed={selected} onClick={onToggle}>{selected && <Check size={12}/>}</button>
-    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: onOpen }, { label: 'Read preview', icon: <BookOpen/>, onSelect: onPreview, disabled: !book.bookID }, { label: 'Remove from Kindle', icon: <Trash2/>, onSelect: onRemove, danger: true }]}/>}
+    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: onOpen }, { label: 'Read', icon: <BookOpen/>, onSelect: onPreview, disabled: !book.bookID }, { label: 'Remove from Kindle', icon: <Trash2/>, onSelect: onRemove, danger: true }]}/>}
   </article>
 }
 
@@ -786,7 +1111,7 @@ function DeviceDetailsPanel({ book, libraryBook, onClose, onPreview }: { book: D
   const cover = book.coverURL ? bridge.previewCover(book.coverURL) : missingCover
   return <aside className="details-panel device-details-panel" aria-label="Device book details"><div className="details-top"><span>ON KINDLE</span><button className="icon-button" onClick={onClose} aria-label="Close book details"><PanelRightClose size={18}/></button></div>
     <div className="detail-cover"><img src={cover} alt={`${title} cover`} onError={e => { e.currentTarget.src = missingCover }}/></div><h2 className="detail-title">{title}</h2><p className="detail-author">{book.authors?.join(', ') || 'Unknown author'}</p>
-    <div className="details-actions">{libraryBook ? <button className="toolbar-button primary-button" onClick={() => onPreview(libraryBook)}><BookOpen size={15}/> Read preview</button> : <p className="device-preview-unavailable">A preview is available only for books in this library.</p>}</div>
+    <div className="details-actions">{libraryBook ? <button className="toolbar-button primary-button" onClick={() => onPreview(libraryBook)}><BookOpen size={15}/> Read</button> : <p className="device-preview-unavailable">A preview is available only for books in this library.</p>}</div>
     <MetadataDetails metadata={book} format={extensionFromPath(book.path)} fileSize={book.size}/>
   </aside>
 }
@@ -860,7 +1185,7 @@ function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave,
       <div className="edit-series"><label>Series<input value={draft.series} onChange={e => update('series', e.target.value)}/></label><label>Index<input value={draft.seriesIndex} onChange={e => update('seriesIndex', e.target.value)}/></label></div>
       <label>Description<textarea rows={5} value={draft.description} onChange={e => update('description', e.target.value)}/></label>
       <div className="edit-actions"><button className="quiet-button" onClick={onCancel}>Cancel</button><button className="toolbar-button primary-button" onClick={onSave} disabled={!draft.title.trim()}><Check size={15}/> Save</button></div>
-    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions"><button className="toolbar-button primary-button" onClick={onPreview}><BookOpen size={15}/> Read preview</button><button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to Kindle</button><button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><MetadataDetails metadata={book} format="EPUB" fileSize={book.fileSize}/></>}
+    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions"><button className="toolbar-button primary-button" onClick={onPreview}><BookOpen size={15}/> Read</button><button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to Kindle</button><button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><MetadataDetails metadata={book} format="EPUB" fileSize={book.fileSize}/></>}
     <div className="detail-footer"><span>Original EPUB is safely stored on this computer.</span><CircleHelp size={15}/></div>
   </aside>
 }
