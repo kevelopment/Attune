@@ -1,14 +1,20 @@
 package library
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,7 +73,7 @@ func migrate(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS books (
 		id TEXT PRIMARY KEY, title TEXT NOT NULL, authors TEXT NOT NULL, language TEXT NOT NULL DEFAULT '', subjects TEXT NOT NULL DEFAULT '[]',
 		sha256 TEXT NOT NULL UNIQUE, cover_path TEXT NOT NULL DEFAULT '', original_path TEXT NOT NULL,
-		added_at TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1
+		added_at TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, import_batch_id TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS conversions (
 		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE, cache_key TEXT NOT NULL, path TEXT NOT NULL,
@@ -92,7 +98,10 @@ func migrate(db *sql.DB) error {
 	if err = ensureColumn(db, "books", "metadata_json", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
 		return err
 	}
-	return ensureColumn(db, "books", "metadata_refreshed", `INTEGER NOT NULL DEFAULT 0`)
+	if err = ensureColumn(db, "books", "metadata_refreshed", `INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	return ensureColumn(db, "books", "import_batch_id", `TEXT NOT NULL DEFAULT ''`)
 }
 
 func ensureColumn(db *sql.DB, table, column, definition string) error {
@@ -316,7 +325,7 @@ func copyManagedTree(source, destination string) error {
 }
 
 func (s *Store) ListBooks() ([]model.Book, error) {
-	rows, err := s.db.Query(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision FROM books ORDER BY added_at DESC`)
+	rows, err := s.db.Query(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id FROM books ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -335,6 +344,13 @@ func (s *Store) ListBooks() ([]model.Book, error) {
 }
 
 func (s *Store) ImportEPUB(source string) (model.Book, bool, error) {
+	return s.ImportEPUBInBatch(source, "")
+}
+
+// NewImportBatchID creates a durable identity for one ImportPaths operation.
+func NewImportBatchID() (string, error) { return makeID() }
+
+func (s *Store) ImportEPUBInBatch(source, batchID string) (model.Book, bool, error) {
 	file, err := os.Open(source)
 	if err != nil {
 		return model.Book{}, false, err
@@ -403,12 +419,12 @@ func (s *Store) ImportEPUB(source string) (model.Book, bool, error) {
 	}
 	// A failed insert removes the newly owned files; the unique hash handles concurrent imports too.
 	authors, _ := json.Marshal(meta.Authors)
-	b := model.Book{ID: id, Title: meta.Title, Authors: meta.Authors, Language: meta.Language, SHA256: hash, CoverURL: "/covers/" + id, AddedAt: time.Now().UTC().Format(time.RFC3339Nano), Revision: 1}
+	b := model.Book{ID: id, Title: meta.Title, Authors: meta.Authors, Language: meta.Language, SHA256: hash, CoverURL: "/covers/" + id, AddedAt: time.Now().UTC().Format(time.RFC3339Nano), ImportBatchID: batchID, Revision: 1}
 	b.Subjects = cleanSubjects(meta.Subjects)
 	applyExtras(&b, extrasFromEPUB(meta))
 	subjects, _ := json.Marshal(b.Subjects)
 	extraJSON, _ := json.Marshal(extrasFromEPUB(meta))
-	_, err = s.db.Exec(`INSERT INTO books(id,title,authors,language,subjects,subjects_refreshed,metadata_json,metadata_refreshed,sha256,cover_path,original_path,added_at,revision) VALUES(?,?,?,?,?,1,?,1,?,?,?,?,?)`, id, b.Title, string(authors), b.Language, string(subjects), string(extraJSON), hash, coverRel, filepath.ToSlash(filepath.Join("books", id, "original.epub")), b.AddedAt, b.Revision)
+	_, err = s.db.Exec(`INSERT INTO books(id,title,authors,language,subjects,subjects_refreshed,metadata_json,metadata_refreshed,sha256,cover_path,original_path,added_at,revision,import_batch_id) VALUES(?,?,?,?,?,1,?,1,?,?,?,?,?,?)`, id, b.Title, string(authors), b.Language, string(subjects), string(extraJSON), hash, coverRel, filepath.ToSlash(filepath.Join("books", id, "original.epub")), b.AddedAt, b.Revision, b.ImportBatchID)
 	if err != nil {
 		_ = os.RemoveAll(bookDir)
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -652,7 +668,7 @@ func (s *Store) BookSource(id string) (model.Book, string, error) {
 	}
 	var b model.Book
 	var rel, authors, subjects, extraJSON string
-	err := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,original_path FROM books WHERE id=?`, id).Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &b.SHA256, &b.AddedAt, &b.Revision, &rel)
+	err := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id,original_path FROM books WHERE id=?`, id).Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &b.SHA256, &b.AddedAt, &b.Revision, &b.ImportBatchID, &rel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Book{}, "", ErrNotFound
 	}
@@ -709,6 +725,165 @@ func (s *Store) CoverPath(id string) (string, error) {
 	return p, nil
 }
 
+// ReplaceBookCover validates and atomically installs a JPEG or PNG cover. The
+// original EPUB is immutable; changing the revision invalidates conversion keys.
+func (s *Store) ReplaceBookCover(id string, data []byte) (model.Book, error) {
+	ext, _, err := ValidateCover(data)
+	if err != nil {
+		return model.Book{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !validBookID(id) {
+		return model.Book{}, ErrNotFound
+	}
+	var oldRel string
+	if err = s.db.QueryRow(`SELECT cover_path FROM books WHERE id=?`, id).Scan(&oldRel); errors.Is(err, sql.ErrNoRows) {
+		return model.Book{}, ErrNotFound
+	} else if err != nil {
+		return model.Book{}, err
+	}
+	booksRoot := filepath.Join(s.root, "books")
+	if err = requireDirectory(booksRoot); err != nil {
+		return model.Book{}, err
+	}
+	dir := filepath.Join(booksRoot, id)
+	if err = requireDirectory(dir); err != nil {
+		return model.Book{}, err
+	}
+	nameID, err := makeID()
+	if err != nil {
+		return model.Book{}, err
+	}
+	name := "cover.override." + nameID + ext
+	tmp, err := os.CreateTemp(dir, ".cover-upload-")
+	if err != nil {
+		return model.Book{}, err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err = tmp.Chmod(0o600); err == nil {
+		var n int
+		n, err = tmp.Write(data)
+		if err == nil && n != len(data) {
+			err = io.ErrShortWrite
+		}
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return model.Book{}, err
+	}
+	if err = os.Rename(tmpName, filepath.Join(dir, name)); err != nil {
+		return model.Book{}, err
+	}
+	newRel := filepath.ToSlash(filepath.Join("books", id, name))
+	tx, err := s.db.Begin()
+	if err != nil {
+		_ = os.Remove(filepath.Join(dir, name))
+		return model.Book{}, err
+	}
+	res, err := tx.Exec(`UPDATE books SET cover_path=?,revision=revision+1 WHERE id=?`, newRel, id)
+	if err == nil {
+		var n int64
+		n, err = res.RowsAffected()
+		if err == nil && n == 0 {
+			err = ErrNotFound
+		}
+	}
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err != nil {
+		_ = os.Remove(filepath.Join(dir, name))
+		return model.Book{}, err
+	}
+	if oldRel != "" {
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(oldRel)))
+		if filepath.ToSlash(filepath.Dir(clean)) == filepath.ToSlash(filepath.Join("books", id)) && strings.HasPrefix(filepath.Base(clean), "cover.") {
+			_ = os.Remove(filepath.Join(s.root, filepath.FromSlash(clean)))
+		}
+	}
+	return s.get(id)
+}
+
+// ValidateCover checks content, decodability, and bounded decoded dimensions.
+func ValidateCover(data []byte) (ext, mime string, err error) {
+	if len(data) == 0 || len(data) > 32<<20 {
+		return "", "", errors.New("cover image must be between 1 byte and 32 MiB")
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return "", "", fmt.Errorf("invalid cover image: %w", err)
+	}
+	if format == "jpeg" {
+		ext, mime = ".jpg", "image/jpeg"
+	} else if format == "png" {
+		ext, mime = ".png", "image/png"
+	} else {
+		return "", "", errors.New("cover must be a JPEG or PNG image")
+	}
+	if detected := http.DetectContentType(data[:min(len(data), 512)]); detected != mime {
+		return "", "", errors.New("cover content does not match JPEG or PNG data")
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 40_000_000 {
+		return "", "", errors.New("cover dimensions must be at most 40 megapixels")
+	}
+	if _, _, err = image.Decode(bytes.NewReader(data)); err != nil {
+		return "", "", fmt.Errorf("invalid cover image: %w", err)
+	}
+	return ext, mime, nil
+}
+
+// ExportEPUB makes a temporary conversion source with the managed cover applied.
+func (s *Store) ExportEPUB(id, destination string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, source, err := s.BookSource(id)
+	if err != nil {
+		return err
+	}
+	cover, coverErr := s.CoverPath(id)
+	if errors.Is(coverErr, ErrNotFound) {
+		return copyFileContents(source, destination)
+	}
+	if coverErr != nil {
+		return coverErr
+	}
+	if !strings.HasPrefix(filepath.Base(cover), "cover.override.") {
+		return copyFileContents(source, destination)
+	}
+	data, err := os.ReadFile(cover)
+	if err == nil && len(data) > 32<<20 {
+		err = errors.New("managed cover exceeds size limit")
+	}
+	if err != nil {
+		return err
+	}
+	return epub.ReplaceCover(source, destination, data, filepath.Ext(cover))
+}
+
+func copyFileContents(source, destination string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(destination)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
 func (s *Store) GetConversion(key string) (string, error) {
 	var p string
 	err := s.db.QueryRow(`SELECT path FROM conversions WHERE cache_key=? ORDER BY book_id LIMIT 1`, key).Scan(&p)
@@ -749,7 +924,7 @@ type rowScanner interface{ Scan(...any) error }
 func scanBook(r rowScanner) (model.Book, error) {
 	var b model.Book
 	var authors, subjects, extraJSON string
-	err := r.Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &b.SHA256, &b.AddedAt, &b.Revision)
+	err := r.Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &b.SHA256, &b.AddedAt, &b.Revision, &b.ImportBatchID)
 	if err != nil {
 		return b, err
 	}
@@ -795,7 +970,7 @@ func (s *Store) populateFileStats(b *model.Book) {
 	b.ModifiedAt = st.ModTime().UTC().Format(time.RFC3339Nano)
 }
 func (s *Store) get(id string) (model.Book, error) {
-	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision FROM books WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id FROM books WHERE id=?`, id)
 	b, err := scanBook(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, ErrNotFound
@@ -805,7 +980,7 @@ func (s *Store) get(id string) (model.Book, error) {
 	return b, err
 }
 func (s *Store) getByHash(hash string) (model.Book, error) {
-	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision FROM books WHERE sha256=?`, hash)
+	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id FROM books WHERE sha256=?`, hash)
 	b, err := scanBook(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, sql.ErrNoRows

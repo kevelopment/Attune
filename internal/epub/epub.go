@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -109,6 +111,261 @@ type encryptionXML struct {
 			} `xml:"CipherReference"`
 		} `xml:"CipherData"`
 	} `xml:"EncryptedData"`
+}
+
+// ReplaceCover copies an EPUB while adding an Attune cover resource and making
+// it the package's declared cover. The input archive is never modified.
+func ReplaceCover(source, destination string, cover []byte, extension string) error {
+	if extension != ".jpg" && extension != ".png" {
+		return errors.New("cover must be a JPEG or PNG image")
+	}
+	mediaType := "image/jpeg"
+	if extension == ".png" {
+		mediaType = "image/png"
+	}
+	z, err := zip.OpenReader(source)
+	if err != nil {
+		return err
+	}
+	defer z.Close()
+	files, err := validateArchive(z)
+	if err != nil {
+		return err
+	}
+	containerData, err := readEntry(files["META-INF/container.xml"], maxXMLSize)
+	if err != nil {
+		return errors.New("EPUB is missing a valid META-INF/container.xml")
+	}
+	var container containerXML
+	if err = xml.Unmarshal(containerData, &container); err != nil || len(container.Rootfiles) == 0 {
+		return errors.New("EPUB container has no package document")
+	}
+	opfPath, err := safeName(container.Rootfiles[0].FullPath)
+	if err != nil {
+		return err
+	}
+	if files[opfPath] == nil {
+		return errors.New("EPUB package document is missing")
+	}
+	opfData, err := readEntry(files[opfPath], maxXMLSize)
+	if err != nil {
+		return err
+	}
+	coverID, coverHref := replacementCoverNames(opfData, extension)
+	updatedOPF, err := declareReplacementCover(opfData, coverID, coverHref, mediaType)
+	if err != nil {
+		return err
+	}
+	coverName := path.Join(path.Dir(opfPath), coverHref)
+	if files[coverName] != nil {
+		return errors.New("EPUB already contains the Attune cover resource")
+	}
+	if err = os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	out, err := os.Create(destination)
+	if err != nil {
+		return err
+	}
+	w := zip.NewWriter(out)
+	writeErr := error(nil)
+	for _, file := range z.File {
+		header := file.FileHeader
+		entry, e := w.CreateHeader(&header)
+		if e != nil {
+			writeErr = e
+			break
+		}
+		if file.Name == opfPath {
+			_, writeErr = entry.Write(updatedOPF)
+			if writeErr != nil {
+				break
+			}
+			continue
+		}
+		input, e := file.Open()
+		if e != nil {
+			writeErr = e
+			break
+		}
+		_, writeErr = io.Copy(entry, input)
+		closeErr := input.Close()
+		if writeErr == nil {
+			writeErr = closeErr
+		}
+		if writeErr != nil {
+			break
+		}
+	}
+	if writeErr == nil {
+		entry, e := w.Create(coverName)
+		if e != nil {
+			writeErr = e
+		} else {
+			_, writeErr = entry.Write(cover)
+		}
+	}
+	if closeErr := w.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if closeErr := out.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		_ = os.Remove(destination)
+	}
+	return writeErr
+}
+
+func replacementCoverNames(data []byte, extension string) (id, href string) {
+	var pkg packageXML
+	_ = xml.Unmarshal(data, &pkg)
+	ids, hrefs := map[string]bool{}, map[string]bool{}
+	for _, item := range pkg.Manifest.Items {
+		ids[item.ID] = true
+		hrefs[item.Href] = true
+	}
+	for n := 0; ; n++ {
+		base := "attune-cover-override"
+		if n > 0 {
+			base += "-" + strconv.Itoa(n+1)
+		}
+		href = base + extension
+		if !ids[base] && !hrefs[href] {
+			return base, href
+		}
+	}
+}
+
+func declareReplacementCover(data []byte, coverID, href, mediaType string) ([]byte, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	var output bytes.Buffer
+	encoder := xml.NewEncoder(&output)
+	manifestOpen, metadataOpen := false, false
+	manifestAdded, metadataAdded := false, false
+	packageVersion3 := false
+	for {
+		tok, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse EPUB package document: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			t.Attr = stripNamespaceDeclarations(t.Attr)
+			tok = t
+			switch strings.ToLower(t.Name.Local) {
+			case "package":
+				packageVersion3 = strings.HasPrefix(strings.TrimSpace(attribute(t.Attr, "version")), "3.")
+			case "manifest":
+				manifestOpen = true
+			case "metadata":
+				metadataOpen = true
+			case "item":
+				if manifestOpen && tokenHas(t.Attr, "properties", "cover-image") {
+					t.Attr = removePropertyToken(t.Attr, "cover-image")
+					tok = t
+				}
+			case "meta":
+				if metadataOpen && strings.EqualFold(attribute(t.Attr, "name"), "cover") {
+					if err = decoder.Skip(); err != nil {
+						return nil, err
+					}
+					continue
+				}
+			}
+		case xml.EndElement:
+			switch strings.ToLower(t.Name.Local) {
+			case "manifest":
+				if manifestOpen && !manifestAdded {
+					attrs := []xml.Attr{{Name: xml.Name{Local: "id"}, Value: coverID}, {Name: xml.Name{Local: "href"}, Value: href}, {Name: xml.Name{Local: "media-type"}, Value: mediaType}}
+					if packageVersion3 {
+						attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "properties"}, Value: "cover-image"})
+					}
+					if err := encoder.EncodeToken(xml.StartElement{Name: xml.Name{Space: t.Name.Space, Local: "item"}, Attr: attrs}); err != nil {
+						return nil, err
+					}
+					if err := encoder.EncodeToken(xml.EndElement{Name: xml.Name{Space: t.Name.Space, Local: "item"}}); err != nil {
+						return nil, err
+					}
+					manifestAdded = true
+				}
+				manifestOpen = false
+			case "metadata":
+				if metadataOpen && !metadataAdded {
+					if err := encoder.EncodeToken(xml.StartElement{Name: xml.Name{Space: t.Name.Space, Local: "meta"}, Attr: []xml.Attr{{Name: xml.Name{Local: "name"}, Value: "cover"}, {Name: xml.Name{Local: "content"}, Value: coverID}}}); err != nil {
+						return nil, err
+					}
+					if err := encoder.EncodeToken(xml.EndElement{Name: xml.Name{Space: t.Name.Space, Local: "meta"}}); err != nil {
+						return nil, err
+					}
+					metadataAdded = true
+				}
+				metadataOpen = false
+			}
+		}
+		if err = encoder.EncodeToken(tok); err != nil {
+			return nil, err
+		}
+	}
+	if !manifestAdded || !metadataAdded {
+		return nil, errors.New("EPUB package document has no metadata or manifest")
+	}
+	if err := encoder.Flush(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func attribute(attrs []xml.Attr, name string) string {
+	for _, attr := range attrs {
+		if strings.EqualFold(attr.Name.Local, name) {
+			return attr.Value
+		}
+	}
+	return ""
+}
+
+func stripNamespaceDeclarations(attrs []xml.Attr) []xml.Attr {
+	filtered := attrs[:0]
+	for _, attr := range attrs {
+		if strings.EqualFold(attr.Name.Space, "xmlns") || (attr.Name.Space == "" && strings.EqualFold(attr.Name.Local, "xmlns")) {
+			continue
+		}
+		filtered = append(filtered, attr)
+	}
+	return filtered
+}
+
+func tokenHas(attrs []xml.Attr, name, want string) bool {
+	for _, attr := range attrs {
+		if strings.EqualFold(attr.Name.Local, name) && hasToken(attr.Value, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func removePropertyToken(attrs []xml.Attr, property string) []xml.Attr {
+	for i, attr := range attrs {
+		if strings.EqualFold(attr.Name.Local, "properties") {
+			parts := strings.Fields(attr.Value)
+			filtered := parts[:0]
+			for _, part := range parts {
+				if !strings.EqualFold(part, property) {
+					filtered = append(filtered, part)
+				}
+			}
+			if len(filtered) == 0 {
+				return append(attrs[:i], attrs[i+1:]...)
+			}
+			attrs[i].Value = strings.Join(filtered, " ")
+			return attrs
+		}
+	}
+	return attrs
 }
 
 // Parse validates the archive structure and extracts metadata and an optional cover.

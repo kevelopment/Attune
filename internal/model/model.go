@@ -1,26 +1,27 @@
 package model
 
 type Book struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	Authors     []string          `json:"authors"`
-	Subjects    []string          `json:"subjects"`
-	Publisher   string            `json:"publisher,omitempty"`
-	Published   string            `json:"published,omitempty"`
-	Identifiers map[string]string `json:"identifiers,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Series      string            `json:"series,omitempty"`
-	SeriesIndex string            `json:"seriesIndex,omitempty"`
-	AuthorSort  []string          `json:"authorSort,omitempty"`
-	TitleSort   string            `json:"titleSort,omitempty"`
-	PageCount   int               `json:"pageCount,omitempty"`
-	FileSize    int64             `json:"fileSize,omitempty"`
-	ModifiedAt  string            `json:"modifiedAt,omitempty"`
-	Language    string            `json:"language"`
-	SHA256      string            `json:"sha256"`
-	CoverURL    string            `json:"coverURL"`
-	AddedAt     string            `json:"addedAt"`
-	Revision    int               `json:"revision"`
+	ID            string            `json:"id"`
+	Title         string            `json:"title"`
+	Authors       []string          `json:"authors"`
+	Subjects      []string          `json:"subjects"`
+	Publisher     string            `json:"publisher,omitempty"`
+	Published     string            `json:"published,omitempty"`
+	Identifiers   map[string]string `json:"identifiers,omitempty"`
+	Description   string            `json:"description,omitempty"`
+	Series        string            `json:"series,omitempty"`
+	SeriesIndex   string            `json:"seriesIndex,omitempty"`
+	AuthorSort    []string          `json:"authorSort,omitempty"`
+	TitleSort     string            `json:"titleSort,omitempty"`
+	PageCount     int               `json:"pageCount,omitempty"`
+	FileSize      int64             `json:"fileSize,omitempty"`
+	ModifiedAt    string            `json:"modifiedAt,omitempty"`
+	Language      string            `json:"language"`
+	SHA256        string            `json:"sha256"`
+	CoverURL      string            `json:"coverURL"`
+	AddedAt       string            `json:"addedAt"`
+	ImportBatchID string            `json:"importBatchID,omitempty"`
+	Revision      int               `json:"revision"`
 }
 
 // BookMetadataEdit replaces the editable descriptive metadata while leaving

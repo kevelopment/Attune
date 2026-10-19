@@ -292,12 +292,21 @@ func (a *App) ImportPaths(paths []string) (model.ImportResult, error) {
 		emitEarlyError()
 		return result, errors.New("import up to 500 books at a time")
 	}
+	batchID := ""
+	if total > 0 {
+		var err error
+		batchID, err = library.NewImportBatchID()
+		if err != nil {
+			emitEarlyError()
+			return result, err
+		}
+	}
 	failed := 0
 	seenBookIDs := make(map[string]struct{}, len(paths))
 	for i, p := range paths {
 		filename := filepath.Base(p)
 		emitProgress(model.ImportProgress{Current: i, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Stage: "importing"})
-		book, duplicate, err := a.store.ImportEPUB(p)
+		book, duplicate, err := a.store.ImportEPUBInBatch(p, batchID)
 		if err != nil {
 			result.Errors = append(result.Errors, filepath.Base(p)+": "+err.Error())
 			failed++
@@ -356,6 +365,60 @@ func (a *App) UpdateBookMetadata(id string, edit model.BookMetadataEdit) (model.
 		return model.Book{}, errors.New("wait for the transfer to finish before editing")
 	}
 	b, err := a.store.UpdateBookMetadata(id, edit)
+	if err == nil {
+		a.event("library:changed")
+	}
+	return b, err
+}
+
+// ChangeBookCover opens the native picker and replaces a book's managed cover.
+// An empty result means the user cancelled the picker.
+func (a *App) ChangeBookCover(id string) (model.Book, error) {
+	if err := a.ready(); err != nil {
+		return model.Book{}, err
+	}
+	filename, err := wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{
+		Title:   "Choose a book cover",
+		Filters: []wruntime.FileFilter{{DisplayName: "JPEG and PNG images", Pattern: "*.jpg;*.jpeg;*.png"}},
+	})
+	if err != nil || filename == "" {
+		return model.Book{}, err
+	}
+	return a.changeBookCoverFromPath(id, filename)
+}
+
+func (a *App) changeBookCoverFromPath(id, filename string) (model.Book, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return model.Book{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return model.Book{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 32<<20 {
+		return model.Book{}, errors.New("cover image must be a regular file between 1 byte and 32 MiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, (32<<20)+1))
+	if err != nil {
+		return model.Book{}, err
+	}
+	if len(data) > 32<<20 {
+		return model.Book{}, errors.New("cover image must be 32 MiB or smaller")
+	}
+	if err = a.ready(); err != nil {
+		return model.Book{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return model.Book{}, errors.New("application is shutting down")
+	}
+	if a.busy {
+		return model.Book{}, errors.New("wait for the transfer to finish before changing covers")
+	}
+	b, err := a.store.ReplaceBookCover(id, data)
 	if err == nil {
 		a.event("library:changed")
 	}
@@ -602,7 +665,7 @@ func (a *App) SendBooks(deviceID string, ids []string) error {
 
 func (a *App) send(ctx context.Context, d model.Device, ids []string) {
 	for i, id := range ids {
-		b, source, err := a.store.BookSource(id)
+		b, _, err := a.store.BookSource(id)
 		p := model.Progress{ID: d.ID, BookID: id, Title: b.Title, Current: i + 1, Total: len(ids)}
 		progress := func(stage, message string) { p.Stage = stage; p.Message = message; a.event("transfer:progress", p) }
 		fail := func(err error) {
@@ -659,8 +722,24 @@ func (a *App) send(ctx context.Context, d model.Device, ids []string) {
 				fail(e)
 				return
 			}
-			if err = a.converter.Convert(ctx, source, output, b.Title, b.Authors); err != nil {
-				fail(err)
+			conversionSource, createErr := os.CreateTemp(dir, "."+key+"-*.epub")
+			if createErr != nil {
+				fail(createErr)
+				return
+			}
+			conversionSourcePath := conversionSource.Name()
+			if createErr = conversionSource.Close(); createErr == nil {
+				createErr = a.store.ExportEPUB(id, conversionSourcePath)
+			}
+			if createErr != nil {
+				_ = os.Remove(conversionSourcePath)
+				fail(createErr)
+				return
+			}
+			convertErr := a.converter.Convert(ctx, conversionSourcePath, output, b.Title, b.Authors)
+			_ = os.Remove(conversionSourcePath)
+			if convertErr != nil {
+				fail(convertErr)
 				return
 			}
 			if err = a.store.SaveConversion(b.ID, key, output); err != nil {
@@ -875,6 +954,7 @@ func (a *App) covers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(body)

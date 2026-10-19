@@ -32,9 +32,11 @@ Manage your EPUB library locally, edit metadata, preview chapters, and send book
 
 | Make room for your books | Take a closer look |
 | --- | --- |
-| Import DRM-free EPUBs by dropping files, using the picker, or pasting copied files (Linux needs `wl-paste` or `xclip`). Track progress and skip exact duplicates. | Browse a cover grid or compact list. Search, sort, and filter by author, genre, or language. |
-| Correct titles, authors, publisher, dates, genres, series, and descriptions in a resizable details panel. | Preview chapters, local book styling, and images in a centered reading page. |
+| Import DRM-free EPUBs by dropping files, using the picker, or pasting copied files (Linux needs `wl-paste` or `xclip`). Track progress and skip exact duplicates. | Browse a cover grid or compact list, adjust book sizes, and filter by author, genre, or language. |
+| Correct metadata and replace missing or incorrect covers with JPEG or PNG images in a resizable details panel. | Preview chapters, local book styling, and images in a centered reading page. |
 | Keep original EPUBs intact in an app-managed library, choose its location, and adjust text size. | Track imports, transfers, and ejections in session activity; choose book actions or select several books at once. |
+
+Use **Book details → Change cover** to choose a JPEG or PNG image (up to 32 MiB and 40 megapixels). Cover changes are saved immediately and applied to the next reader export; the original EPUB stays untouched.
 
 ### A small pause before the next chapter
 

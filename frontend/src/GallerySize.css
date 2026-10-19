@@ -1,0 +1,31 @@
+.book-size-control {
+  width: 110px;
+  height: 34px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: ew-resize;
+}
+.book-size-control svg { width: 15px; height: 15px; flex: none; stroke-width: 1.8; }
+.book-size-control input[type="range"] {
+  width: 76px;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: ew-resize;
+}
+
+@container (max-width:400px) {
+  .library-toolbar { gap:3px; }
+  .book-size-control { width:56px; padding:0 4px; gap:0; }
+  .book-size-control svg { display:none; }
+  .book-size-control input[type="range"] { width:100%; }
+}

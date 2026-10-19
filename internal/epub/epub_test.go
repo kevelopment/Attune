@@ -2,11 +2,120 @@ package epub
 
 import (
 	"archive/zip"
+	"bytes"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestDeclareReplacementCoverKeepsOPFNamespacesAndAttributes(t *testing.T) {
+	input := []byte(`<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf" version="3.0"><metadata><dc:title id="title">Title</dc:title><dc:creator opf:file-as="Writer, A">Writer</dc:creator><meta name="cover" content="old"/></metadata><manifest><item id="old" href="old.jpg" media-type="image/jpeg" properties="cover-image"/></manifest></package>`)
+	output, err := declareReplacementCover(input, "attune-cover-override", "cover.png", "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(output, []byte("_xmlns:")) {
+		t.Fatalf("serialized XML contains an invalid namespace attribute: %s", output)
+	}
+	root := bytes.SplitN(output, []byte(">"), 2)[0]
+	if bytes.Count(root, []byte(`xmlns="http://www.idpf.org/2007/opf"`)) != 1 {
+		t.Fatalf("root has duplicate/default namespace declarations: %s", root)
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(output))
+	var sawTitle, sawCreator, sawCover bool
+	for {
+		token, decodeErr := decoder.Token()
+		if decodeErr != nil {
+			break
+		}
+		if start, ok := token.(xml.StartElement); ok {
+			switch start.Name.Local {
+			case "title":
+				sawTitle = start.Name.Space == "http://purl.org/dc/elements/1.1/" && attribute(start.Attr, "id") == "title"
+			case "creator":
+				for _, attr := range start.Attr {
+					if attr.Name.Local == "file-as" && attr.Name.Space == "http://www.idpf.org/2007/opf" && attr.Value == "Writer, A" {
+						sawCreator = true
+					}
+				}
+			case "item":
+				sawCover = attribute(start.Attr, "id") == "attune-cover-override" && attribute(start.Attr, "properties") == "cover-image"
+			}
+		}
+	}
+	if !sawTitle || !sawCreator || !sawCover {
+		t.Fatalf("lost namespace or metadata while rewriting: title=%v creator=%v cover=%v; %s", sawTitle, sawCreator, sawCover, output)
+	}
+}
+
+func TestDeclareReplacementCoverUsesEPUB2CoverMetadata(t *testing.T) {
+	input := []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Title</dc:title></metadata><manifest/><spine/></package>`)
+	output, err := declareReplacementCover(input, "attune-cover-override", "cover.jpg", "image/jpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(output))
+	var foundCoverMeta, foundImage bool
+	for {
+		token, decodeErr := decoder.Token()
+		if decodeErr != nil {
+			break
+		}
+		if start, ok := token.(xml.StartElement); ok {
+			if start.Name.Local == "meta" && attribute(start.Attr, "name") == "cover" && attribute(start.Attr, "content") == "attune-cover-override" {
+				foundCoverMeta = true
+			}
+			if start.Name.Local == "item" && attribute(start.Attr, "id") == "attune-cover-override" {
+				foundImage = attribute(start.Attr, "media-type") == "image/jpeg" && attribute(start.Attr, "properties") == ""
+			}
+		}
+	}
+	if !foundCoverMeta || !foundImage {
+		t.Fatalf("EPUB2 cover declaration is incorrect: meta=%v item=%v; %s", foundCoverMeta, foundImage, output)
+	}
+}
+
+func TestReplaceCoverAddsCoverWhenEPUBHasNone(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "no-cover.epub")
+	f, err := os.Create(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := zip.NewWriter(f)
+	for name, body := range map[string]string{
+		"META-INF/container.xml": `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>`,
+		"OPS/package.opf":        `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>No cover</dc:title></metadata><manifest/><spine/></package>`,
+	} {
+		entry, e := w.Create(name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = entry.Write([]byte(body)); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cover := []byte("cover bytes")
+	output := filepath.Join(t.TempDir(), "with-cover.epub")
+	if err = ReplaceCover(source, output, cover, ".png"); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := Parse(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.CoverExt != ".png" || !bytes.Equal(metadata.Cover, cover) {
+		t.Fatalf("cover = %q %q", metadata.CoverExt, metadata.Cover)
+	}
+}
 
 func writeEncryptedFixture(t *testing.T, algorithm, uri string) string {
 	t.Helper()

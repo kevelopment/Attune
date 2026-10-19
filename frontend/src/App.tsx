@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom'
 import {
   BookOpen, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
-  CircleHelp, FolderOpen, Upload, Download, LoaderCircle, PanelRightClose,
+  CircleHelp, FolderOpen, Upload, Download, LoaderCircle, PanelRightClose, ImagePlus,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
-import { useTextSize, type TextSize } from './appearance'
+import { useTextSize, useBookSize, type TextSize } from './appearance'
+import BookSizeControl from './GallerySize'
 import ActivityCenter, { useActivityLog } from './ActivityCenter'
 import type { ActivityEntry } from './ActivityCenter'
 import { InlineBanner, useNotifications } from './Notifications'
@@ -22,11 +23,33 @@ type MenuAnchor = { key: string; left: number; top: number }
 type IntakeRequest = { paths: string[]; names: string[]; device: { id: string; name: string } | null }
 type PasteMenu = { left: number; top: number } | null
 const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1_000).toFixed(0)} KB` : n < 1_000_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${(n / 1_000_000_000).toFixed(1)} GB`
+function bookCover(book: Book) {
+  const url = bridge.previewCover(book.coverURL || `/covers/${book.id}`)
+  return bridge.preview ? url : `${url}${url.includes('?') ? '&' : '?'}revision=${book.revision}`
+}
+const recentWindowMs = 30 * 86400000
+function localDateKey(date: Date) { return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}` }
+function recentDayLabel(date: Date, today: Date, yesterday: Date) {
+  const fullDate = new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(date)
+  const key = localDateKey(date)
+  const relative = key === localDateKey(today) ? 'Today' : key === localDateKey(yesterday) ? 'Yesterday' : ''
+  return relative ? `${relative} · ${fullDate}` : fullDate
+}
+function formatAddedTime(timestamp: number) {
+  if (!Number.isFinite(timestamp)) return undefined
+  const date = new Date(timestamp)
+  return {
+    time: new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date),
+    dateTime: date.toISOString(),
+    title: new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' }).format(date),
+  }
+}
 
 export default function App() {
   const updater = useUpdater()
   const [state, setState] = useState<AppState | null>(null)
   const [textSize, setTextSize] = useTextSize()
+  const [bookSize, setBookSize] = useBookSize()
   const [navigation, setNavigation] = useState<{ pages: Page[]; index: number }>({ pages: ['library'], index: 0 })
   const page = navigation.pages[navigation.index]
   const [query, setQuery] = useState('')
@@ -63,6 +86,8 @@ export default function App() {
   const { entries, begin, update: updateActivity, remove: removeActivity } = useActivityLog()
   const updateActivityID = useRef<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const coverInputRef = useRef<HTMLInputElement>(null)
+  const coverTarget = useRef<Book | null>(null)
   const importGuard = useRef(false)
   const transferGuard = useRef(false)
   const refreshGuard = useRef(false)
@@ -171,9 +196,42 @@ export default function App() {
   const books = useMemo(() => {
     const all = state?.books ?? []
     const needle = query.trim().toLowerCase()
-    return all.filter(b => (!needle || `${b.title} ${b.authors.join(' ')}`.toLowerCase().includes(needle)) && matchesFilter(b.authors, authorFilter) && matchesFilter(b.subjects, genreFilter) && matchesFilter(b.language ? [b.language] : [], languageFilter) && (page !== 'recent' || Date.now() - new Date(b.addedAt).getTime() < 30 * 86400000))
-      .sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title) : sort === 'author' ? (a.authors[0] ?? '').localeCompare(b.authors[0] ?? '') : b.addedAt.localeCompare(a.addedAt))
-  }, [state?.books, query, page, sort, authorFilter, genreFilter, languageFilter])
+    const now = Date.now()
+    const filtered = all.filter(b => {
+      const timestamp = page === 'recent' ? Date.parse(b.addedAt) : 0
+      return (!needle || `${b.title} ${b.authors.join(' ')}`.toLowerCase().includes(needle)) && matchesFilter(b.authors, authorFilter) && matchesFilter(b.subjects, genreFilter) && matchesFilter(b.language ? [b.language] : [], languageFilter) && (page !== 'recent' || (Number.isFinite(timestamp) && timestamp >= now - recentWindowMs && timestamp <= now))
+    })
+    return filtered.sort((a, b) => page === 'recent' ? Date.parse(b.addedAt) - Date.parse(a.addedAt) : sort === 'title' ? a.title.localeCompare(b.title) : sort === 'author' ? (a.authors[0] ?? '').localeCompare(b.authors[0] ?? '') : b.addedAt.localeCompare(a.addedAt))
+  }, [state, query, page, sort, authorFilter, genreFilter, languageFilter])
+  const recentGroups = useMemo(() => {
+    if (page !== 'recent') return []
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const batches = new Map<string, { id: string; timestamp: number; totalBooks: number; books: Book[] }>()
+    const visibleIDs = new Set(books.map(book => book.id))
+    for (const book of state?.books ?? []) {
+      const timestamp = Date.parse(book.addedAt)
+      if (!Number.isFinite(timestamp) || timestamp > today.getTime()) continue
+      const id = book.importBatchID ? `batch:${book.importBatchID}` : `book:${book.id}`
+      const batch = batches.get(id) ?? { id, timestamp, totalBooks: 0, books: [] }
+      batch.timestamp = Math.max(batch.timestamp, timestamp)
+      batch.totalBooks += 1
+      if (visibleIDs.has(book.id)) batch.books.push(book)
+      batches.set(id, batch)
+    }
+    const groups = new Map<string, { label: string; timestamp: number; batches: { id: string; timestamp: number; totalBooks: number; books: Book[] }[] }>()
+    for (const batch of batches.values()) {
+      if (!batch.books.length) continue
+      const date = new Date(batch.timestamp)
+      const key = localDateKey(date)
+      const group = groups.get(key) ?? { label: recentDayLabel(date, today, yesterday), timestamp: batch.timestamp, batches: [] }
+      group.timestamp = Math.max(group.timestamp, batch.timestamp)
+      group.batches.push(batch)
+      groups.set(key, group)
+    }
+    return [...groups.values()].map(group => ({ ...group, batches: group.batches.sort((a, b) => b.timestamp - a.timestamp) })).sort((a, b) => b.timestamp - a.timestamp)
+  }, [state, books, page])
   const device = state?.devices?.find(item => !hiddenEjectingDevices.current.has(item.id) && !ejectingDeviceIDs.current.has(item.id))
   const isDevice = page === 'device'
   const visibleDeviceBooks = useMemo(() => deviceBooks.filter(book => {
@@ -363,6 +421,20 @@ export default function App() {
     setEditDraft({ title: book.title, authors: book.authors.join('; '), publisher: book.publisher ?? '', language: book.language ?? '', published: book.published ?? '', subjects: (book.subjects ?? []).join('; '), series: book.series ?? '', seriesIndex: book.seriesIndex ?? '', description: book.description ?? '' })
     setEditing(true)
   }
+  async function changeCover(book: Book, file?: File) {
+    if (busy || importGuard.current || transferActive || changingLibrary || intakeFlowGuard.current) return
+    if (bridge.preview && !file) {
+      coverTarget.current = book
+      coverInputRef.current?.click()
+      return
+    }
+    await run(() => bridge.changeBookCover(book.id, file), async (updated: Book) => {
+      if (!updated?.id) return
+      setFocusedBook(current => current?.id === updated.id ? updated : current)
+      await refresh(true)
+      notify({ text: 'Cover updated', kind: 'success' })
+    })
+  }
   async function openPreview(book: Book) {
     setPreviewTarget(book)
     setBookPreview(null)
@@ -452,6 +524,9 @@ export default function App() {
 
   const hasFilters = !!(authorFilter || genreFilter || languageFilter)
   const openDeviceDetails = (book: DeviceBook) => { setFocusedBook(null); setFocusedDeviceBook(book) }
+  const renderBook = (book: Book, itemLayout: 'grid' | 'list') => (
+    <BookTile key={book.id} book={book} layout={itemLayout} selected={selected.includes(book.id)} menu={activeMenu?.key === `book:${book.id}` ? activeMenu : null} onMenu={button => toggleMenu(`book:${book.id}`, button)} onMenuClose={() => setActiveMenu(null)} canSend={!!device && !transferActive} sendLabel={device ? `Send to ${device.name}` : 'Connect a Kindle to send'} onPreview={() => { setActiveMenu(null); void openPreview(book) }} onEdit={() => { setActiveMenu(null); void startEdit(book) }} onSend={() => { setActiveMenu(null); void send([book.id]) }} onDelete={() => { setActiveMenu(null); void deleteLocal(book) }} onToggle={e => toggle(book.id, e)} onOpen={() => { setFocusedDeviceBook(null); setFocusedBook(book); setEditing(false) }}/>
+  )
   function toggleMenu(key: string, button: HTMLButtonElement) {
     if (activeMenu?.key === key) { setActiveMenu(null); return }
     const rect = button.getBoundingClientRect()
@@ -496,7 +571,7 @@ export default function App() {
       </div>
     </header>
 
-    <main className="main-panel" data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (page !== 'library' && page !== 'recent' && page !== 'device') return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
+    <main className="main-panel" style={{ '--book-scale': bookSize / 100 } as React.CSSProperties} data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (page !== 'library' && page !== 'recent' && page !== 'device') return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
       {page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
         {isDevice && device ? <section className="device-overview">
           <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
@@ -506,10 +581,16 @@ export default function App() {
         <section className="content-heading">
           <div className="library-toolbar">
             <span className="book-count">{isDevice ? `${visibleDeviceBooks.length} ${visibleDeviceBooks.length === 1 ? 'book' : 'books'}` : `${books.length} ${books.length === 1 ? 'book' : 'books'}`}</span>
+            {page === 'recent' && <span className="recent-window-caption">Last 30 days</span>}
             <FilterPicker authorFilter={authorFilter} genreFilter={genreFilter} languageFilter={languageFilter} metadata={metadata} setAuthorFilter={setAuthorFilter} setGenreFilter={setGenreFilter} setLanguageFilter={setLanguageFilter}/>
-            <label className="sort-select" title="Sort books"><ArrowDownUp size={15}/><select aria-label="Sort books" value={sort} onChange={e => setSort(e.target.value as Sort)}><option value="recent">{isDevice ? 'Device order' : 'Recently added'}</option><option value="title">Title</option><option value="author">Author</option></select></label>
-            <div className="segmented" role="group" aria-label="View layout"><button aria-label="Grid view" aria-pressed={layout === 'grid'} className={layout === 'grid' ? 'chosen' : ''} onClick={() => setLayout('grid')}><Grid2X2 size={16}/></button><button aria-label="List view" aria-pressed={layout === 'list'} className={layout === 'list' ? 'chosen' : ''} onClick={() => setLayout('list')}><List size={17}/></button></div>
-            {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${deviceSelection.length} selected books from device`} aria-label={`Remove ${deviceSelection.length} selected books from device`} onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}<button className="toolbar-button compact-action" title="Add from library" aria-label="Add from library" onClick={() => navigateTo('library')}><Send size={16}/><span>Add from library</span></button></> : <>
+            {page !== 'recent' &&
+              <label className="sort-select" title="Sort books"><ArrowDownUp size={15}/><select aria-label="Sort books" value={sort} onChange={e => setSort(e.target.value as Sort)}><option value="recent">{isDevice ? 'Device order' : 'Recently added'}</option><option value="title">Title</option><option value="author">Author</option></select></label>
+            }
+            <div className="view-controls">
+              <BookSizeControl value={bookSize} onChange={setBookSize}/>
+              {page !== 'recent' && <div className="segmented" role="group" aria-label="View layout"><button aria-label="Grid view" aria-pressed={layout === 'grid'} className={layout === 'grid' ? 'chosen' : ''} onClick={() => setLayout('grid')}><Grid2X2 size={16}/></button><button aria-label="List view" aria-pressed={layout === 'list'} className={layout === 'list' ? 'chosen' : ''} onClick={() => setLayout('list')}><List size={17}/></button></div>}
+            </div>
+            {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${deviceSelection.length} selected books from device`} aria-label={`Remove ${deviceSelection.length} selected books from device`} onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}{device && <button className="toolbar-button compact-action" title="Add from library" aria-label="Add from library" onClick={() => navigateTo('library')}><Send size={16}/><span>Add from library</span></button>}</> : <>
               {selected.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${selected.length} selected books`} aria-label={`Remove ${selected.length} selected books`} onClick={() => void deleteSelected()}><Trash2 size={16}/><span>Remove ({selected.length})</span></button>}
               {selected.length > 0 && device && <button className="toolbar-button compact-action" title={`Send ${selected.length} selected books to Kindle`} aria-label={`Send ${selected.length} selected books to Kindle`} onClick={() => void send(selected)} disabled={transferActive}><Send size={16}/><span>Send to Kindle <em>{selected.length}</em></span></button>}
             </>}
@@ -518,13 +599,23 @@ export default function App() {
         </section>
         <div className={`book-area ${dragging ? 'dragging' : ''}`} data-drop-target={isDevice ? 'device' : 'library'}>
           {dragging && <div className="drop-overlay"><div><Upload size={27}/><b>Drop EPUBs to add them</b><span>Your originals stay untouched</span></div></div>}
-          {isDevice ? device ? <DeviceList deviceBooks={visibleDeviceBooks} layout={layout} hasBooks={deviceBooks.length > 0} searching={!!query.trim() || hasFilters} loading={deviceBooksLoading} error={deviceBooksError} selection={deviceSelection} setSelection={setDeviceSelection} onClearSearch={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }} onRefresh={() => deviceRefreshRef.current()} onOpen={openDeviceDetails} menu={activeMenu} onMenu={(key, button) => toggleMenu(key, button)} onMenuClose={() => setActiveMenu(null)} onPreview={previewDeviceBook} onRemove={path => { setActiveMenu(null); confirmRemoveFromDevice([path]) }}/> : <DeviceDisconnected ejecting={!!ejectingDevice} onConnect={() => void addDevice()}/> : books.length ? <div className={`book-collection ${layout === 'list' ? 'list-layout' : ''}`}>
-            {books.map(book => <BookTile key={book.id} book={book} layout={layout} selected={selected.includes(book.id)} menu={activeMenu?.key === `book:${book.id}` ? activeMenu : null} onMenu={button => toggleMenu(`book:${book.id}`, button)} onMenuClose={() => setActiveMenu(null)} canSend={!!device && !transferActive} sendLabel={device ? `Send to ${device.name}` : 'Connect a Kindle to send'} onPreview={() => { setActiveMenu(null); void openPreview(book) }} onEdit={() => { setActiveMenu(null); void startEdit(book) }} onSend={() => { setActiveMenu(null); void send([book.id]) }} onDelete={() => { setActiveMenu(null); void deleteLocal(book) }} onToggle={e => toggle(book.id, e)} onOpen={() => { setFocusedDeviceBook(null); setFocusedBook(book); setEditing(false) }}/>) }
+          {isDevice ? device ? <DeviceList deviceBooks={visibleDeviceBooks} layout={layout} hasBooks={deviceBooks.length > 0} searching={!!query.trim() || hasFilters} loading={deviceBooksLoading} error={deviceBooksError} selection={deviceSelection} setSelection={setDeviceSelection} onClearSearch={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }} onRefresh={() => deviceRefreshRef.current()} onOpen={openDeviceDetails} menu={activeMenu} onMenu={(key, button) => toggleMenu(key, button)} onMenuClose={() => setActiveMenu(null)} onPreview={previewDeviceBook} onRemove={path => { setActiveMenu(null); confirmRemoveFromDevice([path]) }}/> : <DeviceDisconnected ejecting={!!ejectingDevice} onConnect={() => void addDevice()}/> : books.length ? page === 'recent' ? <div className="recent-timeline">
+            {recentGroups.map(group => <section className="recent-day" key={group.label}><h2 className="recent-day-heading">{group.label}</h2>
+              {group.batches.map(batch => { const time = formatAddedTime(batch.timestamp); return <section className="recent-batch" key={batch.id}>
+                <div className="recent-batch-heading"><time dateTime={time?.dateTime} title={time?.title}>{time?.time}</time><span>{batch.books.length < batch.totalBooks ? `${batch.books.length} of ${batch.totalBooks} books shown` : `${batch.totalBooks} ${batch.totalBooks === 1 ? 'book' : 'books'} added`}</span></div>
+                <div className="book-collection list-layout recent-batch-books">
+                  {batch.books.map(book => renderBook(book, 'list'))}
+                </div>
+              </section> })}
+            </section>)}
+          </div> : <div className={`book-collection ${layout === 'list' ? 'list-layout' : ''}`}>
+            {books.map(book => renderBook(book, layout))}
           </div> : <EmptyState recent={page === 'recent'} searching={!!query || hasFilters} onImport={() => void beginImport()} onClear={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}/ >}
         </div>
       </>}
     </main>
-    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)}/></div>}
+    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)} onChangeCover={() => void changeCover(focusedBook)} coverDisabled={busy || transferActive || changingLibrary}/></div>}
+    {bridge.preview && <input hidden type="file" ref={coverInputRef} accept="image/jpeg,image/png,.jpg,.jpeg,.png" aria-label="Choose cover image" onChange={e => { const file = e.currentTarget.files?.[0]; const book = coverTarget.current; e.currentTarget.value = ''; coverTarget.current = null; if (file && book) void changeCover(book, file) }}/ >}
     {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
     {previewTarget && <BookPreviewDialog book={bookPreview?.book ?? previewTarget} preview={bookPreview} loading={previewLoading} error={previewError} chapterIndex={previewChapter} setChapterIndex={setPreviewChapter} onClose={() => { setPreviewTarget(null); setBookPreview(null) }}/>}
     {pasteMenu && <div className="book-context-menu paste-context-menu" style={{ left: pasteMenu.left, top: pasteMenu.top }} role="menu" onContextMenu={e => e.preventDefault()}><button role="menuitem" onClick={() => { setPasteMenu(null); pasteFilesRef.current() }}><span className="menu-item-icon"><Upload size={16}/></span>Paste books <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘V' : 'Ctrl+V'}</kbd></button></div>}
@@ -534,7 +625,7 @@ export default function App() {
 }
 
 function BookTile({ book, layout, selected, menu, onMenu, onMenuClose, canSend, sendLabel, onPreview, onEdit, onSend, onDelete, onToggle, onOpen }: { book: Book; layout: 'grid' | 'list'; selected: boolean; menu: MenuAnchor | null; onMenu: (button: HTMLButtonElement) => void; onMenuClose: () => void; canSend: boolean; sendLabel: string; onPreview: () => void; onEdit: () => void; onSend: () => void; onDelete: () => void; onToggle: (e: React.MouseEvent) => void; onOpen: () => void }) {
-  const cover = bridge.previewCover(book.coverURL || `/covers/${book.id}`)
+  const cover = bookCover(book)
   return <article className={`book-tile ${layout === 'list' ? 'book-row' : ''} ${selected ? 'book-selected' : ''}`}>
     <button className="book-main" onClick={onOpen} aria-label={`View ${book.title}`}>
       <div className="cover-wrap"><img src={cover} alt={`${book.title} cover`} draggable="false" onError={e => { e.currentTarget.src = missingCover }}/><span className="cover-gloss"/><span className="quick-check" aria-hidden="true"><Check size={13}/></span></div>
@@ -709,15 +800,16 @@ function dateLabel(value: string) {
 }
 
 function EmptyState({ recent, searching, onImport, onClear }: { recent: boolean; searching: boolean; onImport: () => void; onClear: () => void }) {
-  return <div className="empty-state"><div className="empty-art"><div className="empty-book book-a"/><div className="empty-book book-b"/><div className="empty-book book-c"/><span className="sparkle s1">✳</span><span className="sparkle s2">✦</span></div><h2>{searching ? 'No books match that search' : recent ? 'Nothing new just yet' : 'Attune your library'}</h2><p>{searching ? 'Try a different title or author.' : recent ? 'Books you add will show up here.' : 'Bring your EPUBs together in one lovely little library.'}</p>{searching ? <button className="quiet-button" onClick={onClear}>Clear search</button> : !recent && <><button className="toolbar-button primary-button" onClick={onImport}><Plus size={17}/> Import EPUBs</button><span className="drop-hint">or drop EPUB files anywhere in this window</span></>}</div>
+  return <div className="empty-state"><div className="empty-art"><div className="empty-book book-a"/><div className="empty-book book-b"/><div className="empty-book book-c"/><span className="sparkle s1">✳</span><span className="sparkle s2">✦</span></div><h2>{searching ? 'No books match that search' : recent ? 'Nothing new just yet' : 'Attune your library'}</h2><p>{searching ? 'Try a different title or author.' : recent ? 'Books you add in the last 30 days will show up here.' : 'Bring your EPUBs together in one lovely little library.'}</p>{searching ? <button className="quiet-button" onClick={onClear}>Clear search</button> : !recent && <><button className="toolbar-button primary-button" onClick={onImport}><Plus size={17}/> Import EPUBs</button><span className="drop-hint">or drop EPUB files anywhere in this window</span></>}</div>
 }
 
 const missingCover = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 620"><rect width="420" height="620" fill="#e6e6e8"/><path d="M145 230c0-12 10-22 22-22h80c12 0 22 10 22 22v150c0 12-10 22-22 22h-80c-12 0-22-10-22-22z" fill="#c8c9cd"/><path d="M210 208v194" stroke="#eee" stroke-width="7"/><path d="M163 263h38m-38 22h32m-32 22h36m38-44h28m-28 22h28m-28 22h28" stroke="#eee" stroke-width="5" stroke-linecap="round"/></svg>')}`
-function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave, onCancel, onDelete, onSend, onPreview }: { book: Book; editing: boolean; draft: EditDraft; setDraft: React.Dispatch<React.SetStateAction<EditDraft>>; onClose: () => void; onEdit: () => void; onSave: () => void; onCancel: () => void; onDelete: () => void; onSend: () => void; onPreview: () => void }) {
+function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave, onCancel, onDelete, onSend, onPreview, onChangeCover, coverDisabled }: { book: Book; editing: boolean; draft: EditDraft; setDraft: React.Dispatch<React.SetStateAction<EditDraft>>; onClose: () => void; onEdit: () => void; onSave: () => void; onCancel: () => void; onDelete: () => void; onSend: () => void; onPreview: () => void; onChangeCover: () => void; coverDisabled: boolean }) {
   const update = (key: keyof EditDraft, value: string) => setDraft(current => ({ ...current, [key]: value }))
   return <aside className="details-panel" aria-label="Book details">
     <div className="details-top"><span>BOOK DETAILS</span><button className="icon-button" onClick={onClose} aria-label="Close book details"><PanelRightClose size={18}/></button></div>
-    <div className="detail-cover"><img src={bridge.previewCover(book.coverURL || `/covers/${book.id}`)} alt={`${book.title} cover`} onError={e => { e.currentTarget.src = missingCover }}/></div>
+    <div className="detail-cover"><img src={bookCover(book)} alt={`${book.title} cover`} onError={e => { e.currentTarget.src = missingCover }}/></div>
+    <div className="cover-edit-control"><button className="toolbar-button" onClick={onChangeCover} disabled={coverDisabled}><ImagePlus size={15}/> Change cover</button><span>JPEG or PNG · saved immediately</span></div>
     {editing ? <div className="edit-fields">
       <label>Title<input value={draft.title} autoFocus onChange={e => update('title', e.target.value)}/></label>
       <label>Authors <span className="field-hint">separate with semicolons</span><input value={draft.authors} onChange={e => update('authors', e.target.value)}/></label>
