@@ -19,14 +19,17 @@ export function useTextSize() {
   return [textSize, setTextSize] as const
 }
 
-export const bookSizeRange = { min: 80, max: 140, step: 10, defaultValue: 100 } as const
+export const bookSizeRange = { min: 50, max: 160, defaultValue: 100 } as const
 const bookSizeStorageKey = 'attune.bookSize'
 
 export function useBookSize() {
   const [bookSize, setBookSize] = useState<number>(() => {
     try {
-      const saved = Number(localStorage.getItem(bookSizeStorageKey))
-      if (Number.isInteger(saved) && saved >= bookSizeRange.min && saved <= bookSizeRange.max && (saved - bookSizeRange.min) % bookSizeRange.step === 0) return saved
+      const stored = localStorage.getItem(bookSizeStorageKey)
+      if (stored !== null && stored.trim() !== '') {
+        const saved = Number(stored)
+        if (Number.isFinite(saved)) return Math.min(bookSizeRange.max, Math.max(bookSizeRange.min, saved))
+      }
     } catch { /* Keep the default when local storage is unavailable. */ }
     return bookSizeRange.defaultValue
   })

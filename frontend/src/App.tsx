@@ -14,6 +14,7 @@ import type { ActivityEntry } from './ActivityCenter'
 import { InlineBanner, useNotifications } from './Notifications'
 import Updates, { useUpdater, UpdateSettingsCard } from './Updates'
 import type { UpdateState } from './types'
+import DropdownSelect from './DropdownSelect'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
@@ -559,7 +560,7 @@ export default function App() {
           <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
           <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
         </div>
-        <h1 className="global-page-title">{page === 'library' ? 'All books' : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
+        <h1 className="global-page-title">{page === 'library' ? `All books (${books.length})` : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
       </div>
       <div className="topbar-center">
         <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>
@@ -580,11 +581,11 @@ export default function App() {
         </section> : null}
         <section className="content-heading">
           <div className="library-toolbar">
-            <span className="book-count">{isDevice ? `${visibleDeviceBooks.length} ${visibleDeviceBooks.length === 1 ? 'book' : 'books'}` : `${books.length} ${books.length === 1 ? 'book' : 'books'}`}</span>
+            {isDevice && <span className="book-count">{`${visibleDeviceBooks.length} ${visibleDeviceBooks.length === 1 ? 'book' : 'books'}`}</span>}
             {page === 'recent' && <span className="recent-window-caption">Last 30 days</span>}
             <FilterPicker authorFilter={authorFilter} genreFilter={genreFilter} languageFilter={languageFilter} metadata={metadata} setAuthorFilter={setAuthorFilter} setGenreFilter={setGenreFilter} setLanguageFilter={setLanguageFilter}/>
             {page !== 'recent' &&
-              <label className="sort-select" title="Sort books"><ArrowDownUp size={15}/><select aria-label="Sort books" value={sort} onChange={e => setSort(e.target.value as Sort)}><option value="recent">{isDevice ? 'Device order' : 'Recently added'}</option><option value="title">Title</option><option value="author">Author</option></select></label>
+              <div className="sort-select" title="Sort books"><ArrowDownUp size={15}/><DropdownSelect label="Sort books" value={sort} onChange={value => setSort(value as Sort)} options={[{ value: 'recent', label: isDevice ? 'Device order' : 'Recently added' }, { value: 'title', label: 'Title' }, { value: 'author', label: 'Author' }]}/></div>
             }
             <div className="view-controls">
               <BookSizeControl value={bookSize} onChange={setBookSize}/>
@@ -670,7 +671,7 @@ function FilterPicker({ authorFilter, genreFilter, languageFilter, metadata, set
   const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!open) return
-    const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
+    const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('[data-dropdown-select-menu]')) setOpen(false) }
     const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); trigger.current?.focus() } }
     document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape)
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape) }
@@ -680,9 +681,8 @@ function FilterPicker({ authorFilter, genreFilter, languageFilter, metadata, set
 }
 function FilterSelect({ label, value, values, hasUnknown, onChange }: { label: string; value: string; values: string[]; hasUnknown: boolean; onChange: (value: string) => void }) {
   const plural = label === 'Genre' ? 'genres' : `${label.toLowerCase()}s`
-  return <label className="filter-select"><span>{label}</span><select aria-label={`Filter by ${label.toLowerCase()}`} value={value} onChange={e => onChange(e.target.value)}>
-    <option value="">All {plural}</option>{values.map(item => <option value={item} key={item}>{label === 'Language' ? languageLabel(item) : item}</option>)}{hasUnknown && <option value={unknownFilter}>Unknown {label.toLowerCase()}</option>}
-  </select></label>
+  const options = [{ value: '', label: `All ${plural}` }, ...values.map(item => ({ value: item, label: label === 'Language' ? languageLabel(item) : item })), ...(hasUnknown ? [{ value: unknownFilter, label: `Unknown ${label.toLowerCase()}` }] : [])]
+  return <div className="filter-select"><span>{label}</span><DropdownSelect label={`Filter by ${label.toLowerCase()}`} value={value} options={options} onChange={onChange}/></div>
 }
 function languageLabel(code: string) {
   try { return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(code) || code }
