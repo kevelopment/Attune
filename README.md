@@ -6,7 +6,7 @@
 </p>
 
 <h1 align="center">Attune</h1>
-<p align="center"><strong>Attune your library.</strong><br>A quiet home for your ebooks, and a companion for your reader.</p>
+<p align="center"><strong>Attune your library.</strong><br>A modern, open-source ebook manager and lightweight Calibre alternative.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-e8e4dc?style=flat-square&labelColor=292a2d"></a>
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="#download">Download</a> ·
+  <a href="https://github.com/kevelopment/Attune/releases/latest">Download latest release</a> ·
   <a href="#a-little-less-library-admin">Features</a> ·
   <a href="docs/development.md">Build from source</a> ·
   <a href="docs/releasing.md">Release guide</a>
@@ -28,7 +28,7 @@
 
 ## A little less library admin
 
-Keep your EPUBs together, tidy their details, and send a few good books to your reader. Attune manages the library locally and handles Kindle conversion with a bundled helper—no Calibre installation or cloud account required.
+Manage your EPUB library locally, edit metadata, preview chapters, and send books to Kindle over USB. No account or Calibre installation required. Kindle USB support is experimental and currently targets the original Kindle 1 and 2 using legacy MOBI conversion.
 
 | Make room for your books | Take a closer look |
 | --- | --- |
@@ -82,7 +82,7 @@ See [development](docs/development.md) for prerequisites, tasks, browser preview
 
 ## Where things stand
 
-Attune 0.0.1 is the first stable release. The library, metadata editor, book preview, updater, and experimental USB management for macOS, Linux, and Windows are implemented. PDF import and additional device families are future work.
+Attune is an early-stage project. Its library, metadata editor, book preview, updater, and experimental USB Kindle management for macOS, Linux, and Windows are implemented. PDF import and support for additional device families are future work.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
