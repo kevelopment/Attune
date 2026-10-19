@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"attune/internal/calibre"
 	"attune/internal/converter"
 	"attune/internal/device"
 	"attune/internal/epub"
@@ -255,6 +256,117 @@ func (a *App) ImportBooks() (model.ImportResult, error) {
 		return model.ImportResult{}, err
 	}
 	return a.ImportPaths(paths)
+}
+
+// ImportCalibreLibrary copies EPUBs and their metadata from a Calibre library.
+func (a *App) ImportCalibreLibrary() (model.ImportResult, error) {
+	if err := a.ready(); err != nil {
+		return model.ImportResult{BookIDs: []string{}, Errors: []string{}}, err
+	}
+	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose a Calibre library"})
+	if err != nil || root == "" {
+		return model.ImportResult{BookIDs: []string{}, Errors: []string{}}, err
+	}
+	return a.importCalibreLibrary(root)
+}
+
+func (a *App) importCalibreLibrary(root string) (model.ImportResult, error) {
+	result := model.ImportResult{BookIDs: []string{}, Errors: []string{}}
+	a.event("import:progress", model.ImportProgress{Stage: "importing", Filename: "Reading Calibre library…"})
+	if err := a.ready(); err != nil {
+		return result, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return result, errors.New("application is shutting down")
+	}
+	if a.busy || a.activeOps.Load() != 0 {
+		return result, errors.New("wait for the current library operation to finish before importing")
+	}
+	a.activeOps.Add(1)
+	defer a.activeOps.Add(-1)
+	books, err := calibre.ReadLibrary(root)
+	if err != nil {
+		a.event("import:progress", model.ImportProgress{Stage: "error", Filename: "Could not read Calibre library"})
+		return result, err
+	}
+	total := len(books)
+	if total == 0 {
+		return result, nil
+	}
+	batchID, err := library.NewImportBatchID()
+	if err != nil {
+		return result, err
+	}
+	emit := func(p model.ImportProgress) { a.event("import:progress", p) }
+	failed := 0
+	seenBookIDs := make(map[string]struct{}, total)
+	for i, item := range books {
+		name := item.Metadata.Title
+		if strings.TrimSpace(name) == "" {
+			name = item.ID
+		}
+		filename := name
+		emit(model.ImportProgress{Current: i, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Skipped: result.Skipped, Stage: "importing"})
+		if item.Issue != "" {
+			result.Errors = append(result.Errors, filename+": "+item.Issue)
+			failed++
+		} else if item.EPUBPath == "" {
+			result.Skipped++
+		} else {
+			var cover []byte
+			coverErr := error(nil)
+			if item.CoverPath != "" {
+				cover, coverErr = readCalibreCover(item.CoverPath)
+				if coverErr != nil {
+					result.Errors = append(result.Errors, filename+" cover: "+coverErr.Error())
+					failed++
+				}
+			}
+			if coverErr == nil {
+				book, duplicate, importErr := a.store.ImportCalibreBook(item.EPUBPath, item.Metadata, cover, batchID)
+				if importErr != nil {
+					result.Errors = append(result.Errors, filename+": "+importErr.Error())
+					failed++
+				} else {
+					if _, seen := seenBookIDs[book.ID]; !seen {
+						result.BookIDs = append(result.BookIDs, book.ID)
+						seenBookIDs[book.ID] = struct{}{}
+					}
+					if duplicate {
+						result.Duplicates++
+					} else {
+						result.Imported++
+					}
+				}
+			}
+		}
+		emit(model.ImportProgress{Current: i + 1, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Skipped: result.Skipped, Stage: "importing"})
+	}
+	emit(model.ImportProgress{Current: total, Total: total, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Skipped: result.Skipped, Stage: "done"})
+	a.event("library:changed")
+	return result, nil
+}
+
+func readCalibreCover(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 32<<20 {
+		return nil, errors.New("cover must be a regular image between 1 byte and 32 MiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, (32<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // ReadClipboardFiles exposes copied local file paths through the Wails-bound

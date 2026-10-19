@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"image"
 	"image/color"
@@ -17,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"attune/internal/library"
 	"attune/internal/model"
@@ -67,6 +70,87 @@ func testApp(t *testing.T) *App {
 	t.Cleanup(func() { _ = store.Close() })
 	d := model.Device{ID: "fake-kindle", Name: "Kindle", Root: filepath.Join(t.TempDir(), "device")}
 	return &App{ctx: context.Background(), root: root, store: store, manager: &fakeManager{device: d}, converter: &fakeConverter{}, converterVersion: "test", selected: map[string]model.Device{}, emit: func(string, ...interface{}) {}}
+}
+
+func makeImportCalibreLibrary(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	bookDir := filepath.Join(root, "Author", "Book (1)")
+	if err := os.MkdirAll(bookDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "Author", "Other (2)"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(bookDir, "Book - Author.epub")
+	writeTestEPUB(t, source, "Calibre metadata title")
+	db, err := sql.Open("sqlite3", filepath.Join(root, "metadata.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT, timestamp TEXT, pubdate TEXT, author_sort TEXT, sort TEXT, series_index REAL, path TEXT, has_cover INTEGER, last_modified TEXT);
+		CREATE TABLE data(id INTEGER PRIMARY KEY, book INTEGER, format TEXT, uncompressed_size INTEGER, name TEXT);
+		INSERT INTO books VALUES(1,'Calibre metadata title','2024-01-02 03:04:05+00:00',NULL,NULL,NULL,1,'Author/Book (1)',0,'2024-01-03 00:00:00+00:00');
+		INSERT INTO books VALUES(2,'Metadata only','2024-01-02 03:04:05+00:00',NULL,NULL,NULL,1,'Author/Other (2)',0,'2024-01-03 00:00:00+00:00');
+		INSERT INTO data VALUES(1,1,'EPUB',123,'Book - Author');
+		INSERT INTO data VALUES(2,2,'PDF',123,'Metadata only');`)
+	closeErr := db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	return root, source
+}
+
+func TestImportCalibreLibraryCopiesEPUBAndSkipsMetadataOnly(t *testing.T) {
+	a := testApp(t)
+	defer a.store.Close()
+	root, source := makeImportCalibreLibrary(t)
+	sourceBefore, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataBefore, err := os.ReadFile(filepath.Join(root, "metadata.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lastProgress model.ImportProgress
+	a.emit = func(event string, args ...interface{}) {
+		if event == "import:progress" && len(args) > 0 {
+			lastProgress = args[0].(model.ImportProgress)
+		}
+	}
+	result, err := a.importCalibreLibrary(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 || result.Duplicates != 0 || result.Skipped != 1 || len(result.BookIDs) != 1 {
+		t.Fatalf("unexpected import result: %#v", result)
+	}
+	if lastProgress.Stage != "done" || lastProgress.Skipped != 1 || lastProgress.Total != 2 {
+		t.Fatalf("unexpected final progress: %#v", lastProgress)
+	}
+	after, err := os.ReadFile(source)
+	if err != nil || !bytes.Equal(sourceBefore, after) {
+		t.Fatalf("Calibre EPUB source changed: %v", err)
+	}
+	metadataAfter, err := os.ReadFile(filepath.Join(root, "metadata.db"))
+	if err != nil || !bytes.Equal(metadataBefore, metadataAfter) {
+		t.Fatalf("Calibre metadata database changed: %v", err)
+	}
+	book, _, err := a.store.BookSource(result.BookIDs[0])
+	if err != nil || book.Title != "Calibre metadata title" {
+		t.Fatalf("imported book metadata missing: %#v, %v", book, err)
+	}
+	result, err = a.importCalibreLibrary(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 0 || result.Duplicates != 1 || result.Skipped != 1 {
+		t.Fatalf("reimport should report duplicate and skipped record: %#v", result)
+	}
 }
 
 type finalizingFirstWriteWriter struct {

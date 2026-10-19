@@ -80,6 +80,7 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 @media(prefers-color-scheme:dark){.recent-day-heading:before{border-color:var(--panel)}}
 
 .settings-card>.settings-actions{display:flex;align-items:center;gap:8px;flex:none}.settings-card .settings-actions button{white-space:nowrap}.settings-card>div>span[title]{overflow-wrap:anywhere}
+.calibre-import-card>div span{white-space:normal;line-height:1.5}
 @media(max-width:680px){.settings-card{align-items:flex-start;flex-direction:column;gap:12px}.settings-actions{flex-wrap:wrap}}
 
 /* Compact library controls and typography preferences. */

@@ -351,6 +351,21 @@ func (s *Store) ImportEPUB(source string) (model.Book, bool, error) {
 func NewImportBatchID() (string, error) { return makeID() }
 
 func (s *Store) ImportEPUBInBatch(source, batchID string) (model.Book, bool, error) {
+	return s.importEPUB(source, batchID, nil, nil)
+}
+
+// ImportCalibreBook imports a Calibre book while preserving its library
+// metadata and optional cover. The EPUB remains an exact copy of the source.
+func (s *Store) ImportCalibreBook(source string, metadata model.Book, cover []byte, batchID string) (model.Book, bool, error) {
+	return s.importEPUB(source, batchID, &metadata, &importedCover{data: cover})
+}
+
+type importedCover struct {
+	data []byte
+	ext  string
+}
+
+func (s *Store) importEPUB(source, batchID string, importedMetadata *model.Book, importedCover *importedCover) (model.Book, bool, error) {
 	file, err := os.Open(source)
 	if err != nil {
 		return model.Book{}, false, err
@@ -371,6 +386,12 @@ func (s *Store) ImportEPUBInBatch(source, batchID string) (model.Book, bool, err
 		return b, true, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return model.Book{}, false, err
+	}
+	if importedCover != nil && len(importedCover.data) > 0 {
+		importedCover.ext, _, err = ValidateCover(importedCover.data)
+		if err != nil {
+			return model.Book{}, false, err
+		}
 	}
 	id, err := makeID()
 	if err != nil {
@@ -406,10 +427,42 @@ func (s *Store) ImportEPUBInBatch(source, batchID string) (model.Book, bool, err
 	if err != nil {
 		return model.Book{}, false, err
 	}
+	metadata := model.Book{
+		Title: meta.Title, Authors: meta.Authors, Language: meta.Language,
+		Subjects: cleanSubjects(meta.Subjects),
+	}
+	extra := extrasFromEPUB(meta)
+	coverData, coverExt := meta.Cover, meta.CoverExt
+	if importedMetadata != nil {
+		metadata = *importedMetadata
+		metadata.Title = strings.TrimSpace(metadata.Title)
+		if metadata.Title == "" {
+			metadata.Title = meta.Title
+		}
+		metadata.Authors = cleanAuthors(metadata.Authors)
+		if len(metadata.Authors) == 0 {
+			metadata.Authors = meta.Authors
+		}
+		metadata.Language = strings.TrimSpace(metadata.Language)
+		metadata.Subjects = cleanSubjects(metadata.Subjects)
+		extra = bookExtras{
+			Publisher: metadata.Publisher, Published: metadata.Published,
+			Identifiers: metadata.Identifiers, Description: metadata.Description,
+			Series: metadata.Series, SeriesIndex: metadata.SeriesIndex,
+			AuthorSort: metadata.AuthorSort, TitleSort: metadata.TitleSort,
+			PageCount: metadata.PageCount,
+		}
+	}
+	if importedCover != nil && len(importedCover.data) > 0 {
+		coverData, coverExt = importedCover.data, importedCover.ext
+	}
 	coverRel := ""
-	if len(meta.Cover) > 0 {
-		coverName := "cover" + meta.CoverExt
-		if err = os.WriteFile(filepath.Join(tmp, coverName), meta.Cover, 0o600); err != nil {
+	if len(coverData) > 0 {
+		coverName := "cover" + coverExt
+		if importedCover != nil && len(importedCover.data) > 0 {
+			coverName = "cover.override.calibre" + coverExt
+		}
+		if err = os.WriteFile(filepath.Join(tmp, coverName), coverData, 0o600); err != nil {
 			return model.Book{}, false, err
 		}
 		coverRel = filepath.ToSlash(filepath.Join("books", id, coverName))
@@ -418,12 +471,12 @@ func (s *Store) ImportEPUBInBatch(source, batchID string) (model.Book, bool, err
 		return model.Book{}, false, err
 	}
 	// A failed insert removes the newly owned files; the unique hash handles concurrent imports too.
-	authors, _ := json.Marshal(meta.Authors)
-	b := model.Book{ID: id, Title: meta.Title, Authors: meta.Authors, Language: meta.Language, SHA256: hash, CoverURL: "/covers/" + id, AddedAt: time.Now().UTC().Format(time.RFC3339Nano), ImportBatchID: batchID, Revision: 1}
-	b.Subjects = cleanSubjects(meta.Subjects)
-	applyExtras(&b, extrasFromEPUB(meta))
+	authors, _ := json.Marshal(metadata.Authors)
+	b := model.Book{ID: id, Title: metadata.Title, Authors: metadata.Authors, Language: metadata.Language, SHA256: hash, CoverURL: "/covers/" + id, AddedAt: time.Now().UTC().Format(time.RFC3339Nano), ImportBatchID: batchID, Revision: 1}
+	b.Subjects = metadata.Subjects
+	applyExtras(&b, extra)
 	subjects, _ := json.Marshal(b.Subjects)
-	extraJSON, _ := json.Marshal(extrasFromEPUB(meta))
+	extraJSON, _ := json.Marshal(extra)
 	_, err = s.db.Exec(`INSERT INTO books(id,title,authors,language,subjects,subjects_refreshed,metadata_json,metadata_refreshed,sha256,cover_path,original_path,added_at,revision,import_batch_id) VALUES(?,?,?,?,?,1,?,1,?,?,?,?,?,?)`, id, b.Title, string(authors), b.Language, string(subjects), string(extraJSON), hash, coverRel, filepath.ToSlash(filepath.Join("books", id, "original.epub")), b.AddedAt, b.Revision, b.ImportBatchID)
 	if err != nil {
 		_ = os.RemoveAll(bookDir)

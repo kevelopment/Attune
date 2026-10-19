@@ -69,6 +69,10 @@ export const bridge = {
     if (!isPreview) return api('ImportBooks')
     return { imported: 2, duplicates: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
   },
+  async importCalibreLibrary(): Promise<ImportResult> {
+    if (!isPreview) return api('ImportCalibreLibrary')
+    return { imported: 2, duplicates: 1, skipped: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
+  },
   async readClipboardFiles(): Promise<string[]> {
     if (!isPreview) return api('ReadClipboardFiles')
     return ['~/Downloads/Piranesi.epub', '~/Downloads/The Silent Library.epub']

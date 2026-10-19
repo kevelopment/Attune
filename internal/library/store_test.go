@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -137,6 +139,122 @@ func TestImportEditDuplicateAndRestart(t *testing.T) {
 	books, err := s.ListBooks()
 	if err != nil || len(books) != 1 || books[0].Title != "Edited" || books[0].Revision != 2 {
 		t.Fatalf("restart list = %#v, %v", books, err)
+	}
+}
+
+func TestImportCalibreBookPreservesMetadataCoverAndOriginal(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(t.TempDir(), "book.epub")
+	fixtureEPUB(t, source, "Source Title")
+	originalHash, err := fileHash(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cover := jpegCover(t)
+	metadata := model.Book{
+		Title: "Calibre Title", Authors: []string{"Jane Doe", "Editor"}, Language: "de",
+		Subjects: []string{"Novel", "History"}, Publisher: "Calibre Press", Published: "1998-02",
+		Identifiers: map[string]string{"isbn": "9781234567890", "doi": "10.1234/example"},
+		Description: "Curated description", Series: "A Series", SeriesIndex: "2.5",
+		AuthorSort: []string{"Doe, Jane", "Editor"}, TitleSort: "Calibre Title, The", PageCount: 321,
+		AddedAt: "2001-01-01T00:00:00Z", ImportBatchID: "source-batch", Revision: 99,
+	}
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	b, duplicate, err := s.ImportCalibreBook(source, metadata, cover, "calibre-batch-1")
+	if err != nil || duplicate {
+		t.Fatalf("ImportCalibreBook = duplicate %v, error %v", duplicate, err)
+	}
+	if b.Title != metadata.Title || !slices.Equal(b.Authors, metadata.Authors) || b.Language != metadata.Language ||
+		!slices.Equal(b.Subjects, metadata.Subjects) || b.Publisher != metadata.Publisher || b.Published != metadata.Published ||
+		!reflect.DeepEqual(b.Identifiers, metadata.Identifiers) || b.Description != metadata.Description ||
+		b.Series != metadata.Series || b.SeriesIndex != metadata.SeriesIndex ||
+		!slices.Equal(b.AuthorSort, metadata.AuthorSort) || b.TitleSort != metadata.TitleSort || b.PageCount != metadata.PageCount {
+		t.Fatalf("imported metadata = %#v", b)
+	}
+	if b.ImportBatchID != "calibre-batch-1" || b.AddedAt == "" || b.AddedAt == metadata.AddedAt || b.Revision != 1 {
+		t.Fatalf("local import timeline metadata = %#v", b)
+	}
+	_, storedSource, err := s.BookSource(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceHash, hashErr := fileHash(storedSource); hashErr != nil || sourceHash != originalHash {
+		t.Fatalf("stored EPUB hash = %q, %v; want %q", sourceHash, hashErr, originalHash)
+	}
+	coverPath, err := s.CoverPath(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, readErr := os.ReadFile(coverPath); readErr != nil || !bytes.Equal(data, cover) {
+		t.Fatalf("stored cover = %d bytes, %v; want %d bytes", len(data), readErr, len(cover))
+	}
+	export := filepath.Join(t.TempDir(), "export.epub")
+	if err = s.ExportEPUB(b.ID, export); err != nil {
+		t.Fatal(err)
+	}
+	exported, err := epub.Parse(export)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exported.CoverExt != ".jpg" || !bytes.Equal(exported.Cover, cover) {
+		t.Fatalf("exported Calibre cover ext=%q bytes=%d", exported.CoverExt, len(exported.Cover))
+	}
+	if sourceHash, hashErr := fileHash(source); hashErr != nil || sourceHash != originalHash {
+		t.Fatalf("source EPUB changed: hash = %q, %v; want %q", sourceHash, hashErr, originalHash)
+	}
+}
+
+func TestImportCalibreBookDuplicateDoesNotReplaceMetadataOrCover(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	source := filepath.Join(t.TempDir(), "book.epub")
+	fixtureEPUB(t, source, "Source Title")
+	firstCover := jpegCover(t)
+	first, duplicate, err := s.ImportCalibreBook(source, model.Book{Title: "First title", Authors: []string{"First author"}, Series: "First series"}, firstCover, "first-batch")
+	if err != nil || duplicate {
+		t.Fatalf("first import = duplicate %v, error %v", duplicate, err)
+	}
+	secondCover := jpegCover(t)
+	second, duplicate, err := s.ImportCalibreBook(source, model.Book{Title: "Replacement title", Authors: []string{"Other author"}, Series: "Other series"}, secondCover, "second-batch")
+	if err != nil || !duplicate {
+		t.Fatalf("duplicate import = duplicate %v, error %v", duplicate, err)
+	}
+	if second.ID != first.ID || second.Title != first.Title || !slices.Equal(second.Authors, first.Authors) || second.Series != first.Series || second.ImportBatchID != first.ImportBatchID {
+		t.Fatalf("duplicate changed existing metadata: first %#v, second %#v", first, second)
+	}
+	coverPath, err := s.CoverPath(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, readErr := os.ReadFile(coverPath); readErr != nil || !bytes.Equal(data, firstCover) {
+		t.Fatalf("duplicate changed existing cover: %d bytes, %v", len(data), readErr)
+	}
+}
+
+func TestImportCalibreBookRejectsInvalidCover(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	source := filepath.Join(t.TempDir(), "book.epub")
+	fixtureEPUB(t, source, "Source Title")
+	if _, _, err = s.ImportCalibreBook(source, model.Book{Title: "Calibre Title"}, []byte("not an image"), "batch"); err == nil {
+		t.Fatal("expected invalid cover to be rejected")
+	}
+	books, err := s.ListBooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 0 {
+		t.Fatalf("invalid cover left a partial import: %#v", books)
 	}
 }
 
