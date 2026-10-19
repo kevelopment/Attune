@@ -15,6 +15,8 @@ import { InlineBanner, useNotifications } from './Notifications'
 import Updates, { useUpdater, UpdateSettingsCard } from './Updates'
 import type { UpdateState } from './types'
 import DropdownSelect from './DropdownSelect'
+import Welcome from './Welcome'
+import type { CalibreLocation } from './Welcome'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
@@ -49,6 +51,9 @@ function formatAddedTime(timestamp: number) {
 export default function App() {
   const updater = useUpdater()
   const [state, setState] = useState<AppState | null>(null)
+  const [onboarding, setOnboarding] = useState<{ required: boolean; libraries: CalibreLocation[] } | null>(null)
+  const [onboardingError, setOnboardingError] = useState('')
+  const onboardingReady = useRef(false)
   const [textSize, setTextSize] = useTextSize()
   const [bookSize, setBookSize] = useBookSize()
   const [navigation, setNavigation] = useState<{ pages: Page[]; index: number }>({ pages: ['library'], index: 0 })
@@ -116,6 +121,7 @@ export default function App() {
   }
 
   const refresh = useCallback(async (force = false) => {
+    if (!onboardingReady.current) return
     if (refreshGuard.current || (importGuard.current && !force)) return
     refreshGuard.current = true
     try {
@@ -136,7 +142,20 @@ export default function App() {
     updateActivity(id, { status, current: next.progress || 0, total: 100, detail: next.downloaded ? 'Downloaded and verified · ready to restart' : next.error || `Downloading ${next.latestVersion}` })
     if (status !== 'running') updateActivityID.current = null
   }, [updater.state, begin, updateActivity])
-  useEffect(() => { void refresh() }, [refresh])
+  const loadOnboarding = useCallback(async () => {
+    onboardingReady.current = false
+    setOnboarding(null)
+    setOnboardingError('')
+    try {
+      const next = await bridge.getOnboardingState()
+      setOnboarding(next)
+      onboardingReady.current = !next.required
+      if (!next.required) await refresh()
+    } catch (e) {
+      setOnboardingError(`Attune couldn’t check whether setup is complete. ${message(e)}`)
+    }
+  }, [refresh])
+  useEffect(() => { void loadOnboarding() }, [loadOnboarding])
   useEffect(() => {
     const timer = window.setInterval(() => { if (!busyRef.current && !importGuard.current) void refresh() }, 6000)
     return () => window.clearInterval(timer)
@@ -392,9 +411,19 @@ export default function App() {
     if (bridge.preview) await performImport(() => bridge.previewImport(), 18, 'Preparing sample EPUBs…')
     else await performImport(() => bridge.importBooks())
   }
-  async function importCalibreLibrary() {
-    if (intakeFlowGuard.current || busy || transferActive || changingLibrary) return
-    await performImport(() => bridge.importCalibreLibrary(), 0, 'Calibre library')
+  async function importCalibreLibrary(): Promise<ImportResult | null> {
+    if (intakeFlowGuard.current || busy || transferActive || changingLibrary) return null
+    return await performImport(() => bridge.importCalibreLibrary(), 0, 'Calibre library')
+  }
+  async function completeOnboarding() {
+    await bridge.completeOnboarding()
+    onboardingReady.current = true
+    await refresh(true)
+    setOnboarding(current => current ? { ...current, required: false } : current)
+    setOnboardingError('')
+  }
+  async function importCalibreAt(path: string) {
+    return await performImport(() => bridge.importCalibreLibraryAt(path), 0, 'Calibre library')
   }
   async function addDevice() {
     if (ejectingDeviceIDs.current.size) return
@@ -549,6 +578,10 @@ export default function App() {
   const detailsVisible = page !== 'settings' && page !== 'updates'
   const detailsOpen = detailsVisible && !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
+  if (!onboarding || onboarding.required || onboardingError) {
+    if (!onboarding && !onboardingError) return <main className={`welcome-shell ${bridge.preview ? 'preview-mode' : ''}`}><section className="welcome-panel" role="status"><img className="welcome-app-icon" src="/attune.svg" alt=""/><h1 id="welcome-title">Attune your library.</h1><p>Checking your library setup…</p></section></main>
+    return <Welcome libraries={onboarding?.libraries ?? []} error={onboardingError || undefined} onRetry={() => void loadOnboarding()} onScan={() => bridge.findCalibreLibraries(true)} onComplete={completeOnboarding} onImport={importCalibreAt} onBrowse={importCalibreLibrary} preview={bridge.preview}/>
+  }
   return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
       <nav className="rail-nav" aria-label="Library sections">
@@ -570,7 +603,7 @@ export default function App() {
         <h1 className="global-page-title">{page === 'library' ? `All books (${books.length})` : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>
       </div>
       <div className="topbar-center">
-        <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>
+        {page !== 'settings' && <ActivityCenter entries={entries} onCancelTransfer={() => void run(() => bridge.cancelTransfer())}/>}
         {page !== 'settings' && page !== 'updates' && <label className="search-box"><Search size={17}/><input ref={searchRef} placeholder="Search books" aria-label="Search books" value={query} onChange={e => setQuery(e.target.value)}/><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ F' : 'Ctrl+F'}</kbd>{query && <button className="clear-search" onClick={() => setQuery('')} aria-label="Clear search"><X size={14}/></button>}</label>}
       </div>
       <div className="top-actions">

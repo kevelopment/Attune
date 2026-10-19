@@ -1,7 +1,8 @@
 import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress, UpdateState } from './types'
 
-const isPreview = new URLSearchParams(location.search).has('preview') || (import.meta.env.DEV && import.meta.env.VITE_ATTUNE_PREVIEW === '1')
+const isPreview = new URLSearchParams(location.search).has('preview') || new URLSearchParams(location.search).get('welcome') === '1' || (import.meta.env.DEV && import.meta.env.VITE_ATTUNE_PREVIEW === '1')
 const previewStateError = new URLSearchParams(location.search).get('state') === 'error'
+const previewWelcome = new URLSearchParams(location.search).get('welcome') === '1'
 const previewEjectFails = new URLSearchParams(location.search).get('eject') === 'fail'
 const previewEjectDelay = new URLSearchParams(location.search).get('eject') === 'slow' ? 8000 : 1400
 const coverColors = ['#797a66', '#577067', '#bb7b55', '#586987', '#986b7b', '#8d7258']
@@ -14,7 +15,8 @@ const previewBooks: Book[] = sampleTitles.map((title, i) => {
   added.setTime(added.getTime() - (i % 3) * 1000)
   return { id: `sample-${i}`, title, authors: [sampleAuthors[i % sampleAuthors.length]], language: 'en', sha256: '', coverURL: `preview:${i}`, addedAt: added.toISOString(), importBatchID: `sample-batch-${batch}`, revision: 1 }
 })
-const previewState: AppState = { books: previewBooks, devices: [{ id: 'kindle-preview', name: 'Kindle', root: '/Volumes/Kindle', freeBytes: 842_000_000, totalBytes: 1_600_000_000 }], converterReady: true, converterVersion: 'preview', libraryPath: '~/Library/Application Support/Ebook Library' }
+const previewState: AppState = { books: previewWelcome ? [] : previewBooks, devices: [{ id: 'kindle-preview', name: 'Kindle', root: '/Volumes/Kindle', freeBytes: 842_000_000, totalBytes: 1_600_000_000 }], converterReady: true, converterVersion: 'preview', libraryPath: '~/Library/Application Support/Ebook Library' }
+const previewCalibreLibraries = [{ path: '~/Books/Calibre Library', name: 'Calibre Library' }]
 const updateScenario = new URLSearchParams(location.search).get('update')
 let previewUpdate: UpdateState = { currentVersion: '0.0.4', latestVersion: updateScenario && updateScenario !== 'latest' ? '0.0.5' : '', available: !!updateScenario && updateScenario !== 'latest', downloaded: updateScenario === 'ready', status: updateScenario === 'ready' ? 'ready' : updateScenario === 'error' ? 'error' : updateScenario === 'available' ? 'available' : 'idle', releaseURL: 'https://github.com/kevelopment/Attune/releases', releaseNotes: 'A few thoughtful improvements for your library.', progress: updateScenario === 'ready' ? 100 : 0, received: 0, total: 0, error: updateScenario === 'error' ? 'The update could not be downloaded. Please try again.' : '' }
 let previewUpdateAttempts = 0
@@ -24,7 +26,7 @@ const previewDevice: Device = { ...previewState.devices[0] }
 let listeners: ((p: Progress) => void)[] = []
 let importListeners: ((p: ImportProgress) => void)[] = []
 let previewTransfer: Progress | null = null
-let previewDeviceBooks: DeviceBook[] = [{ path: 'documents/Sea of Tranquility.mobi', name: 'Sea of Tranquility.mobi', size: 483000, bookID: '' }, { path: 'documents/Piranesi.mobi', name: 'Piranesi.mobi', size: 257000, bookID: '' }]
+let previewDeviceBooks: DeviceBook[] = previewBooks.slice(0, 6).map((book, i) => ({ path: `documents/${book.title}.mobi`, name: `${book.title}.mobi`, size: 257000 + i * 113000, bookID: book.id, title: book.title, authors: book.authors, language: book.language, coverURL: book.coverURL }))
 
 function api(name: string, ...args: unknown[]) {
   const fn = window.go?.main?.App?.[name]
@@ -34,6 +36,24 @@ function api(name: string, ...args: unknown[]) {
 
 export const bridge = {
   preview: isPreview,
+  async getOnboardingState(): Promise<{ required: boolean; libraries: { path: string; name: string }[] }> {
+    return isPreview ? { required: previewWelcome, libraries: previewWelcome ? previewCalibreLibraries : [] } : api('GetOnboardingState')
+  },
+  async completeOnboarding(): Promise<void> {
+    if (!isPreview) return api('CompleteOnboarding')
+  },
+  async findCalibreLibraries(scan: boolean): Promise<{ path: string; name: string }[]> {
+    if (!isPreview) return api('FindCalibreLibraries', scan)
+    if (!scan) return previewCalibreLibraries
+    await new Promise(resolve => window.setTimeout(resolve, 650))
+    return [...previewCalibreLibraries, { path: '~/Documents/Reader Archive', name: 'Reader Archive' }]
+  },
+  async importCalibreLibraryAt(path: string): Promise<ImportResult> {
+    if (!isPreview) return api('ImportCalibreLibraryAt', path)
+    await new Promise(resolve => window.setTimeout(resolve, 800))
+    if (previewWelcome) previewState.books = previewBooks
+    return { imported: 12, duplicates: 2, skipped: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
+  },
   async getUpdateState(): Promise<UpdateState> { return isPreview ? { ...previewUpdate } : api('GetUpdateState') },
   async checkForUpdates(): Promise<UpdateState> {
     if (!isPreview) return api('CheckForUpdates')
@@ -71,6 +91,7 @@ export const bridge = {
   },
   async importCalibreLibrary(): Promise<ImportResult> {
     if (!isPreview) return api('ImportCalibreLibrary')
+    if (previewWelcome) previewState.books = previewBooks
     return { imported: 2, duplicates: 1, skipped: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
   },
   async readClipboardFiles(): Promise<string[]> {

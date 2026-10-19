@@ -1,8 +1,17 @@
 # README screenshots
 
-These screenshots show the actual Attune frontend in explicit browser preview mode (`?preview=1`). All book titles, author names, cover designs, and chapter text are fictional demonstration fixtures from `frontend/src/bridge.ts`. No imported books, personal metadata, or commercial cover artwork are included.
+The main README uses four 2480 × 1640 captures (1240 × 820 at 2× scale):
 
-The original demonstration assets are part of Attune and covered by the repository's MIT license. To refresh them, run the frontend dev server, open preview mode, choose the library/details or chapter-preview view, and capture the app content without browser chrome. Keep screenshots representative of implemented features.
+- `welcome-screen.png`: welcome screen with a detected Calibre library, captured against an empty development library.
+- `library-calibre-import.png`: library after importing the classic books from the real Project Gutenberg EPUBs in Downloads through the Go backend.
+- `recently-added.png`: timeline for that same imported collection.
+- `connected-kindle-mock.png`: device page with locally converted MOBIs from those books. A disposable Go build overlay supplies the screenshot-only device identity and capacity; no physical USB reader was used or tested.
+
+The screenshots come from the Go-backed browser renderer at 1240 × 820, using the app's dark material backdrop (`#45464a`) to match the desktop window. `scripts/render-readme-showcase.mjs` regenerates the `*-rounded.svg` copies and the layered `showcase.svg` hero from the four PNGs. It embeds the original raster data, preserving each capture without README CSS. Run it after replacing any capture. The README links to `showcase.png`, a transparent 4400 × 3200 export of that SVG, for zooming. Re-export the PNG at the same dimensions whenever the composition changes.
+
+`library-details.png` and `book-preview.png` are earlier browser-preview captures using fictional demonstration fixtures from `frontend/src/bridge.ts`. Their original demonstration artwork is covered by the repository’s MIT license. These captures include third-party book cover artwork; that artwork is not licensed under Attune’s MIT license.
+
+Keep screenshots representative of implemented features. Device screenshots must be labelled when simulated.
 
 ## Social preview
 

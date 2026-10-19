@@ -1,8 +1,12 @@
 # Importing a Calibre library
 
-Choose **Settings → Import Calibre library → Choose library…** and select the library folder that contains `metadata.db`. Close Calibre first so its metadata and files are consistent while they are copied.
+On first launch, choose **Import Calibre** on the welcome screen. Attune checks common library locations; select a match, choose **Scan for libraries**, or browse with **Choose folder**. You can also import later through **Settings → Import Calibre library → Choose library…**. Select the library folder containing `metadata.db`. Close Calibre first so its metadata and files are consistent while they are copied.
 
 Attune reads the Calibre database without migrating or editing it. EPUB files and covers are copied into the existing Attune library. Your Calibre library remains usable in Calibre, and Attune continues to use its own library layout. Calibre does not need to be installed.
+
+The optional scan checks Documents, Desktop, Downloads, and other home folders. It is bounded by depth, time, and entry count, skips hidden/system-cache/build folders and symlinks, and does not search the entire computer. Use **Choose folder** for libraries elsewhere.
+
+Choose **Start from scratch → Get started** to begin with an empty library. Setup is remembered, and users who already have books go straight to their library. Cancelling or failing an import keeps setup open; a partial import can be reviewed before continuing.
 
 ## What is imported
 

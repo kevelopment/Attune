@@ -23,55 +23,46 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/library-details.png" width="100%" alt="Attune library with illustrated fictional book covers and a separate book details panel">
-  <br><sub>Staged preview with fictional books, authors, and original cover artwork. No personal library data.</sub>
+  <a href="docs/images/showcase.png"><img src="docs/images/showcase.svg" width="100%" alt="Attune showcase: library, welcome, Recently added, and a simulated Kindle in the foreground"></a>
 </p>
+<p align="center"><sub>Four views of one local library, including a simulated Kindle.</sub></p>
+
+<details>
+<summary>View individual screenshots</summary>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/welcome-screen-rounded.svg" alt="Welcome screen with a detected Calibre library"><br><sub>Welcome</sub></td>
+    <td width="50%"><img src="docs/images/library-calibre-import-rounded.svg" alt="Library after importing classic books from Calibre"><br><sub>Library</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/recently-added-rounded.svg" alt="Recently added timeline for the imported books"><br><sub>Recently added</sub></td>
+    <td width="50%"><img src="docs/images/connected-kindle-mock-rounded.svg" alt="Simulated Kindle reader with local demonstration books"><br><sub>Simulated Kindle</sub></td>
+  </tr>
+</table>
+</details>
 
 ## A little less library admin
 
-This README describes the current `main` branch. Check the [release notes](https://github.com/kevelopment/Attune/releases) for the features included in each download.
-
-Manage your EPUB library locally, edit metadata, preview chapters, and send books to Kindle over USB. No account or Calibre installation required. Kindle USB support is experimental and currently targets the original Kindle 1 and 2 using legacy MOBI conversion.
-
-| Make room for your books | Take a closer look |
-| --- | --- |
-| Import DRM-free EPUBs by dropping files, using the picker, or pasting copied files (Linux needs `wl-paste` or `xclip`). Track progress and skip byte-identical duplicates. | Browse an evenly spaced cover grid or compact list, adjust book sizes, and filter by author, genre, or language. |
-| Correct metadata and replace missing or incorrect covers with JPEG or PNG images in a resizable details panel. | Preview chapters, local book styling, and images in a centered reading page. |
-| Keep original EPUBs intact in an app-managed library, choose its location, and adjust text size. | Track imports, transfers, and ejections in session activity; choose book actions or select several books at once. |
-
-Use the size slider beside the gallery/list toggle to adjust covers and list density smoothly from 50% to 160%. Attune remembers your preference. Sort and filter menus support keyboard navigation, and applied filters appear as removable tags.
-
-Use **Book details → Change cover** to choose a JPEG or PNG image (up to 32 MiB and 40 megapixels). Cover changes are saved immediately and used when sending books to Kindle; the original EPUB stays untouched.
+A local home for your EPUBs: organize your collection, edit metadata and covers, preview books, and send them to a reader over USB. Your original files stay intact. No account or Calibre installation required.
 
 ### Bring your Calibre library
 
-Use **Settings → Import Calibre library → Choose library…** and select the folder containing `metadata.db`. Attune copies its EPUBs, metadata, and covers into your current library. The Calibre library is opened read-only and stays unchanged; no Calibre installation is required.
-
-Titles, authors, tags, publisher, language, publication date, identifiers, description, and series information come from Calibre rather than potentially older metadata embedded in the EPUB. Books are added to your current Attune library. Byte-identical EPUBs are skipped without changing existing metadata or covers; matching titles, authors, or ISBNs are not merged, so a modified EPUB can become a separate entry. Books without an EPUB are reported as skipped. The import appears as one batch in Recently added, with progress and results in session activity. This is a snapshot import; export and library synchronization are not included. See [import details](docs/calibre-import.md).
-
-### A small pause before the next chapter
-
-<p align="center">
-  <img src="docs/images/book-preview.png" width="100%" alt="Attune's chapter preview with a charcoal surround and a rounded white portrait page">
-</p>
-
-The preview is a quick way to check a book's contents and language before sending it. Scripts and remote content are blocked. It is not a simulation of a particular e-reader.
+Start fresh or import EPUBs, metadata, and covers from an existing Calibre library. Attune copies books into its own library and leaves Calibre’s library untouched. [Import details](docs/calibre-import.md).
 
 ### A companion for your reader
 
-Connect a mounted USB Kindle on macOS, Linux, or Windows to browse its books and available space, send books with automatic legacy MOBI conversion, remove device copies, or eject safely. Transfers verify copied bytes, refuse to overwrite existing files, and skip unchanged verified copies.
-
-Book transfers currently use legacy MOBI, targeting the **original Kindle 1 and 2**. Support for more readers—including Tolino and Kobo—is planned. Experimental USB discovery, transfer, and eject are implemented for macOS, Linux, and Windows, but have not been validated with physical devices across those platforms. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters.
+Browse and manage a mounted USB Kindle, with automatic legacy MOBI conversion for the original Kindle 1 and 2. USB support is experimental on macOS, Windows, and Linux; physical-device testing is still limited. More reader families, including Tolino and Kobo, are planned.
 
 ## Download
 
-Choose the latest release for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Release packages include the conversion helper and its license; you do not need Go, Node.js, Rust, or Calibre to run Attune. Older preview builds do not include the updater, so install a current release manually once.
+Download Attune for your operating system and CPU from the [Releases page](https://github.com/kevelopment/Attune/releases). Packages include the conversion helper; no developer tools or Calibre installation are required.
 
-| Platform | Features | Package |
-| --- | --- | --- |
-| macOS 13+ | Library and experimental USB Kindle management | DMG installer and updater ZIP |
-| Windows | Library and experimental USB Kindle management | ZIP archive |
-| Linux | Library and experimental USB Kindle management | Compressed application archive |
+| Platform | Package |
+| --- | --- |
+| macOS 13+ | DMG installer and updater ZIP |
+| Windows | ZIP archive |
+| Linux | Compressed application archive |
 
 **macOS installation:**
 
@@ -79,11 +70,11 @@ Choose the latest release for your operating system and CPU from the [Releases p
 2. If Gatekeeper says “Apple could not verify Attune,” choose **Done**, then open **System Settings → Privacy & Security** and select **Open Anyway** for Attune.
 3. Choose **Open** in the confirmation prompt. See [Apple’s instructions](https://support.apple.com/en-us/102445) for details. Current macOS downloads are ad-hoc signed and not Apple-notarized, so this may be needed on first launch.
 
-Windows downloads are not Authenticode-signed. Physical-device behavior has not been validated on every platform. Linux requires `lsblk`, `udisksctl`, and permission to use UDisks; Windows support uses PowerShell storage cmdlets and volumes with drive letters. Linux also requires GTK 3 and WebKit2GTK 4.1; Windows requires the WebView2 runtime. See the [release guide](docs/releasing.md) for details.
+Windows downloads are not Authenticode-signed. Linux requires GTK 3 and WebKit2GTK 4.1; Windows requires WebView2. See the [release guide](docs/releasing.md) for installation and USB requirements.
 
 ## Software updates
 
-Attune checks public GitHub releases on startup and every 15 minutes while open; no account is required. When an update is available, click its download icon. Attune downloads and verifies the update before offering **Restart now** or **Later**. A staged update installs when you quit and is active the next time you open Attune; your library stays in place. The installed app folder must be writable. Older builds without the updater need a one-time manual download from the [Releases page](https://github.com/kevelopment/Attune/releases).
+Attune checks for updates on startup and every 15 minutes. When a new release is available, use the sidebar download icon to install it and restart when ready. Your library stays in place.
 
 ## Build from source
 
@@ -95,11 +86,11 @@ See [releasing](docs/releasing.md) for the tag-driven build and publication work
 
 ## Where things stand
 
-Attune is an early-stage project. Its library, Calibre importer, metadata editor, book preview, updater, and experimental USB Kindle management for macOS, Linux, and Windows are implemented. PDF import and support for additional device families are future work.
+Attune is an early-stage project focused on EPUB libraries and USB readers. PDF import and support for additional reader families are future work.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
-Metadata edits are stored in the library without changing the original EPUB. Generated Kindle files receive title and author overrides and replacement covers; other edited fields remain library metadata.
+For current capabilities and limits, see the [development guide](docs/development.md), [Calibre import guide](docs/calibre-import.md), and [release notes](https://github.com/kevelopment/Attune/releases).
 
 ## Contributing
 

@@ -13,7 +13,8 @@ import (
 )
 
 type librarySettings struct {
-	LibraryPath string `json:"libraryPath"`
+	LibraryPath        string `json:"libraryPath,omitempty"`
+	OnboardingComplete bool   `json:"onboardingComplete,omitempty"`
 }
 
 func librarySettingsPath(envRoot string) (string, error) {
@@ -53,7 +54,37 @@ func saveLibraryLocation(path, libraryPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(librarySettings{LibraryPath: libraryPath}, "", "  ")
+	settings, err := readLibrarySettings(path)
+	if err != nil {
+		return err
+	}
+	settings.LibraryPath = libraryPath
+	return saveLibrarySettings(path, settings)
+}
+
+func readLibrarySettings(path string) (librarySettings, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return librarySettings{}, nil
+	}
+	if err != nil {
+		return librarySettings{}, err
+	}
+	var settings librarySettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return librarySettings{}, fmt.Errorf("read library settings: %w", err)
+	}
+	return settings, nil
+}
+
+func saveLibrarySettings(path string, settings librarySettings) error {
+	if path == "" {
+		return errors.New("library settings path is unavailable")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}

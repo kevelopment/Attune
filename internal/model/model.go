@@ -104,6 +104,16 @@ type ImportResult struct {
 	Errors     []string `json:"errors"`
 }
 
+type OnboardingState struct {
+	Required  bool                     `json:"required"`
+	Libraries []CalibreLibraryLocation `json:"libraries"`
+}
+
+type CalibreLibraryLocation struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
 type ImportProgress struct {
 	Current    int    `json:"current"`
 	Total      int    `json:"total"`
