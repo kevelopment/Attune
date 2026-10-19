@@ -64,7 +64,7 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 
 .updates-card>div span{max-width:100%;white-space:normal;line-height:1.5}
 
-.rail-updates{color:var(--subtle)}.rail-updates svg{width:16px;height:16px;stroke-width:1.6}
+.rail-updates svg{width:16px;height:16px;stroke-width:2.1}
 
 .recent-window-caption{color:var(--muted);font-size:.83333rem;white-space:nowrap}
 .recent-timeline{display:flex;flex-direction:column;gap:25px;padding:4px 2px 18px 5px}
@@ -165,19 +165,28 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 
 /* Cover and row dimensions follow the persistent book-size slider without changing type size. */
 .book-collection:not(.list-layout) {
-  grid-template-columns:repeat(auto-fill,minmax(calc(145px * var(--book-scale, 1)),1fr));
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,calc(145px * var(--book-scale, 1))),1fr));
   gap:calc(27px * var(--book-scale, 1)) calc(22px * var(--book-scale, 1));
 }
-.book-collection:not(.list-layout) .book-tile {padding:calc(8px * var(--book-scale, 1)) calc(8px * var(--book-scale, 1)) calc(10px * var(--book-scale, 1))}
+.book-collection:not(.list-layout) .book-tile {
+  width:calc(145px * var(--book-scale, 1));
+  max-width:100%;
+  justify-self:center;
+  padding:calc(8px * var(--book-scale, 1)) calc(8px * var(--book-scale, 1)) calc(10px * var(--book-scale, 1));
+}
 .cover-wrap {max-height:calc(240px * var(--book-scale, 1))}
-.cover-wrap img {object-fit:contain}
+.cover-wrap,.detail-cover {background:transparent;box-shadow:none}
+.book-tile:hover .cover-wrap {transform:none;box-shadow:none}
+.cover-wrap img,.detail-cover img {object-fit:contain;filter:drop-shadow(0 3px 5px #17171d18)}
+.cover-gloss {display:none}
 .book-meta {gap:calc(4px * var(--book-scale, 1));padding-top:calc(11px * var(--book-scale, 1))}
 .book-row {gap:calc(14px * var(--book-scale, 1));padding:calc(8px * var(--book-scale, 1)) calc(10px * var(--book-scale, 1))}
 .book-row .book-main {gap:calc(13px * var(--book-scale, 1))}
 .book-row .cover-wrap {width:calc(43px * var(--book-scale, 1));height:calc(61px * var(--book-scale, 1))}
 .book-row .book-meta {gap:calc(5px * var(--book-scale, 1))}
 .recent-batch-books .book-row {padding:calc(7px * var(--book-scale, 1)) calc(8px * var(--book-scale, 1))}
-.device-book {height:calc(68px * var(--book-scale, 1));gap:calc(13px * var(--book-scale, 1));padding:0 calc(13px * var(--book-scale, 1))}
+.device-book {min-height:44px;height:calc(68px * var(--book-scale, 1));gap:calc(13px * var(--book-scale, 1));padding:0 calc(13px * var(--book-scale, 1))}
 .device-book-icon {width:calc(34px * var(--book-scale, 1));height:calc(40px * var(--book-scale, 1))}
 .device-book-copy {gap:calc(5px * var(--book-scale, 1))}
 .device-book-main .cover-wrap {width:calc(56px * var(--book-scale, 1));height:calc(76px * var(--book-scale, 1))}
