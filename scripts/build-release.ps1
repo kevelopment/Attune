@@ -22,7 +22,7 @@ try {
   $config = $backup | ConvertFrom-Json
   $config.info.productVersion = $ProductVersion
   $config | ConvertTo-Json -Depth 32 | Set-Content -Encoding utf8 $configPath
-  & (Join-Path $env:GOBIN "wails.exe") build -clean -platform windows/amd64 -ldflags "-X main.appVersion=$Version -X main.updateEnabled=true"
+  & (Join-Path $env:GOBIN "wails.exe") build -clean -platform windows/amd64 -ldflags "-X attune/internal/app.appVersion=$Version -X attune/internal/app.updateEnabled=true"
   if ($LASTEXITCODE -ne 0) { throw "Wails build failed with exit code $LASTEXITCODE" }
   $stage = Join-Path $root "build/release/Attune-windows-amd64"
   $dist = Join-Path $root "dist"

@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"archive/zip"
@@ -214,7 +214,7 @@ func TestCoverHandlerWritesCompleteLargeImageOnce(t *testing.T) {
 	}
 
 	w := &finalizingFirstWriteWriter{}
-	a.covers(w, httptest.NewRequest(http.MethodGet, books[0].CoverURL, nil))
+	a.ServeCovers(w, httptest.NewRequest(http.MethodGet, books[0].CoverURL, nil))
 	if w.code != http.StatusOK || w.writes != 1 || !bytes.Equal(w.body.Bytes(), encoded.Bytes()) {
 		t.Fatalf("cover response code=%d writes=%d body=%d bytes, want one complete %d-byte write", w.code, w.writes, w.body.Len(), encoded.Len())
 	}
@@ -241,7 +241,7 @@ func TestAppImportEditCacheInvalidationPersistenceAndCover(t *testing.T) {
 		t.Fatalf("preview=%#v, err=%v", preview, err)
 	}
 	chapterResponse := httptest.NewRecorder()
-	a.previewResource(chapterResponse, httptest.NewRequest("GET", preview.Chapters[0].Href, nil))
+	a.ServePreviewResource(chapterResponse, httptest.NewRequest("GET", preview.Chapters[0].Href, nil))
 	chapterBody := chapterResponse.Body.String()
 	if chapterResponse.Code != 200 || !strings.Contains(chapterBody, "Safe text") || strings.Contains(chapterBody, "<script") || strings.Contains(chapterBody, "onclick") || strings.Contains(chapterBody, "remote.test") {
 		t.Fatalf("unsafe/bad chapter response %d: %s", chapterResponse.Code, chapterBody)
@@ -250,7 +250,7 @@ func TestAppImportEditCacheInvalidationPersistenceAndCover(t *testing.T) {
 		t.Fatalf("missing preview CSP: %#v", chapterResponse.Header())
 	}
 	escapeResponse := httptest.NewRecorder()
-	a.previewResource(escapeResponse, httptest.NewRequest("GET", "/preview/"+b.ID+"/%2e%2e/outside.txt", nil))
+	a.ServePreviewResource(escapeResponse, httptest.NewRequest("GET", "/preview/"+b.ID+"/%2e%2e/outside.txt", nil))
 	if escapeResponse.Code != 404 {
 		t.Fatalf("preview traversal returned %d", escapeResponse.Code)
 	}
@@ -268,7 +268,7 @@ func TestAppImportEditCacheInvalidationPersistenceAndCover(t *testing.T) {
 	}
 	coverReq := httptest.NewRequest("GET", edited.CoverURL, nil)
 	coverRes := httptest.NewRecorder()
-	a.covers(coverRes, coverReq)
+	a.ServeCovers(coverRes, coverReq)
 	if coverRes.Code != 200 || coverRes.Header().Get("Content-Type") != "image/png" || !strings.Contains(coverRes.Header().Get("X-Content-Type-Options"), "nosniff") {
 		t.Fatalf("cover response: %d %#v %q", coverRes.Code, coverRes.Header(), coverRes.Body.String())
 	}
@@ -289,7 +289,7 @@ func TestAppImportEditCacheInvalidationPersistenceAndCover(t *testing.T) {
 		t.Fatalf("persisted cache = %q, %v", got, err)
 	}
 	bad := httptest.NewRecorder()
-	a.covers(bad, httptest.NewRequest("GET", "/covers/../etc/passwd", nil))
+	a.ServeCovers(bad, httptest.NewRequest("GET", "/covers/../etc/passwd", nil))
 	if bad.Code != 404 {
 		t.Fatalf("bad cover path status = %d", bad.Code)
 	}
@@ -654,7 +654,7 @@ func TestShutdownCancelsQueueAndRejectsNewJobs(t *testing.T) {
 	if manager.started.Load() == 0 {
 		t.Fatal("queue did not start")
 	}
-	a.shutdown(context.Background())
+	a.Shutdown(context.Background())
 	if err = a.SendBooks(manager.device.ID, []string{b[0].ID}); err == nil {
 		t.Fatal("accepted a transfer during shutdown")
 	}

@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -113,14 +113,14 @@ func TestRelocateLibraryPreservesBooksAndPersistsLocation(t *testing.T) {
 	}
 	t.Setenv("EBOOK_LIBRARY_HOME", envRoot)
 	started := NewApp()
-	started.startup(context.Background())
+	started.Startup(context.Background())
 	if started.initErr != nil {
 		t.Fatalf("startup with persisted library location: %v", started.initErr)
 	}
 	if started.root != want {
 		t.Fatalf("startup root = %q, want persisted %q", started.root, want)
 	}
-	started.shutdown(context.Background())
+	started.Shutdown(context.Background())
 }
 
 func TestRelocateLibraryRejectsUnsafeDestinationWithoutChanges(t *testing.T) {
@@ -190,7 +190,7 @@ func TestConfiguredMissingLibraryFailsWithoutCreatingIt(t *testing.T) {
 	}
 	t.Setenv("EBOOK_LIBRARY_HOME", envRoot)
 	a := NewApp()
-	a.startup(context.Background())
+	a.Startup(context.Background())
 	if a.initErr == nil {
 		t.Fatal("startup accepted configured library without library.sqlite")
 	}
@@ -206,7 +206,7 @@ func TestMalformedLibrarySettingsFailsStartup(t *testing.T) {
 	}
 	t.Setenv("EBOOK_LIBRARY_HOME", envRoot)
 	a := NewApp()
-	a.startup(context.Background())
+	a.Startup(context.Background())
 	if a.initErr == nil {
 		t.Fatal("startup accepted malformed library settings")
 	}

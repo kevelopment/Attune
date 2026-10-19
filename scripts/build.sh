@@ -18,7 +18,7 @@ fi
 if [ ! -x "$GOBIN/wails" ]; then
   go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 fi
-wails build -clean -ldflags "-X main.appVersion=$ATTUNE_VERSION -X main.updateEnabled=true"
+wails build -clean -ldflags "-X attune/internal/app.appVersion=$ATTUNE_VERSION -X attune/internal/app.updateEnabled=true"
 APP="build/bin/Attune.app"
 mkdir -p "$APP/Contents/Resources/licenses"
 cp "third_party/kindling/darwin-$ARCH/kindling-cli" "$APP/Contents/Resources/kindling-cli"
