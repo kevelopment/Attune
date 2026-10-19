@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -66,7 +66,7 @@ func TestShutdownCancelsAndJoinsUpdateOperation(t *testing.T) {
 		app.endUpdateOperation(cancel)
 		close(done)
 	}()
-	app.shutdown(context.Background())
+	app.Shutdown(context.Background())
 	select {
 	case <-done:
 	case <-time.After(time.Second):

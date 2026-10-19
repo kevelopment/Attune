@@ -25,9 +25,9 @@ restore_config() { cp "$backup" wails.json; rm -f "$backup"; }
 trap restore_config EXIT HUP INT TERM
 node -e 'const fs=require("fs"); const p="wails.json"; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.info.productVersion=process.argv[1]; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n")' "$PRODUCT_VERSION"
 if [ -n "$TAG" ]; then
-  wails build -clean -platform "$goos/$goarch" -tags "$TAG" -ldflags "-X main.appVersion=$VERSION -X main.updateEnabled=true"
+  wails build -clean -platform "$goos/$goarch" -tags "$TAG" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
 else
-  wails build -clean -platform "$goos/$goarch" -ldflags "-X main.appVersion=$VERSION -X main.updateEnabled=true"
+  wails build -clean -platform "$goos/$goarch" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
 fi
 stage="build/release/Attune-$goos-$goarch"
 mkdir -p "$stage/licenses" dist
