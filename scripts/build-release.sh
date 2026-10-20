@@ -67,7 +67,19 @@ if [ "$goos" = darwin ]; then
   codesign --force --sign - "$app/Contents/Resources/kindling-cli"
   codesign --force --deep --sign - "$app"
   codesign --verify --deep --strict "$app"
-  ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Attune-macos-$goarch.zip"
+  update_archive="dist/Attune-macos-$goarch.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$update_archive"
+  python3 - "$update_archive" <<'PY'
+import stat
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    for entry in archive.infolist():
+        file_type = stat.S_IFMT(entry.external_attr >> 16)
+        if file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
+            raise SystemExit(f"update archive contains a non-regular entry: {entry.filename}")
+PY
   sh scripts/build-macos-dmg.sh "$app" "$goarch"
 elif [ "$goos" = linux ]; then
   cp build/bin/Attune "$stage/Attune"

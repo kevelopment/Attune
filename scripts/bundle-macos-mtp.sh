@@ -9,7 +9,9 @@ mkdir -p "$FRAMEWORKS" "$APP/Contents/Resources/licenses"
 
 for source in "$PREFIX"/lib/libmtp*.dylib "$PREFIX"/lib/libusb-1.0*.dylib; do
   [ -f "$source" ] || continue
-  cp -P "$source" "$FRAMEWORKS/$(basename "$source")"
+  # The updater intentionally rejects archive symlinks. Dereference the
+  # versioned-library links so the app's update ZIP contains regular files.
+  cp -L "$source" "$FRAMEWORKS/$(basename "$source")"
 done
 [ -f "$FRAMEWORKS/libmtp.9.dylib" ] || { echo "bundled libmtp dylib is missing" >&2; exit 1; }
 [ -f "$FRAMEWORKS/libusb-1.0.0.dylib" ] || { echo "bundled libusb dylib is missing" >&2; exit 1; }
