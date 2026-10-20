@@ -1,28 +1,26 @@
 # Importing a Calibre library
 
-On first launch, choose **Import Calibre** on the welcome screen. Attune checks common library locations; select a match, choose **Scan for libraries**, or browse with **Choose folder**. You can also import later through **Settings → Import Calibre library → Choose library…**. Select the library folder containing `metadata.db`. Close Calibre first so its metadata and files are consistent while they are copied.
+On first launch, choose **Import Calibre**. Attune checks common library locations; select a match, choose **Scan for libraries**, or browse with **Choose folder**. You can also import later through **Settings → Import Calibre library**. Select the folder containing `metadata.db`. Close Calibre while importing so its database and files remain consistent.
 
-Attune reads the Calibre database without migrating or editing it. EPUB files and covers are copied into the existing Attune library. Your Calibre library remains usable in Calibre, and Attune continues to use its own library layout. Calibre does not need to be installed.
-
-The optional scan checks Documents, Desktop, Downloads, and other home folders. It is bounded by depth, time, and entry count, skips hidden/system-cache/build folders and symlinks, and does not search the entire computer. Use **Choose folder** for libraries elsewhere.
-
-Choose **Start from scratch → Get started** to begin with an empty library. Setup is remembered, and users who already have books go straight to their library. Cancelling or failing an import keeps setup open; a partial import can be reviewed before continuing.
+Attune reads the Calibre database read-only and copies its book files and covers into Attune’s library. It does not move or edit the source library, and Calibre does not need to be installed. This is a one-time import, not ongoing synchronization or export.
 
 ## What is imported
 
-- EPUB files, without changing their bytes.
-- Calibre titles and ordered authors, tags (shown as genres), publisher, publication date, language, description, identifiers, series and series index, author/title sort metadata, and Calibre’s native page count when available.
-- The library’s cover, when available, instead of an older embedded EPUB cover.
-- One import batch in Recently added, using the time the import occurred.
+- One Attune book record for each Calibre record, including records without an available book file.
+- Each available format file recorded by Calibre, kept byte-for-byte as a separate asset.
+- Standard book metadata, covers, custom-column definitions and values, and reading positions, bookmarks, highlights, and notes. Resolvable annotations appear in the reader sidebar; unsupported or unplaced records remain available there with an unresolved status, and original Calibre payloads are retained.
+- Stable Calibre library/book identity, so a repeat import can add missing files without replacing Attune’s edited metadata or preferred files.
 
-Books with no EPUB are counted as skipped. Invalid or missing files are reported per book; other books can continue importing. Byte-identical EPUB duplicates are counted separately, and existing Attune metadata and covers are kept unchanged.
+Missing, corrupt, or unsafe files are reported per format; the remaining files for that book and other books can still import. Changed files are kept as additional variants. When no Calibre identity mapping exists, Attune reuses a book only if an exact content hash points to one unambiguous existing book. It never merges distinct books by title, author, or ISBN. Identical content already attached to another book is reported rather than moved.
 
-## Current scope
+Direct file import also accepts common ebook and document extensions. Built-in reading supports DRM-free EPUB, MOBI/AZW3, FB2, TXT, PDF, CBZ, and CBR. Other stored formats can be opened with the operating system’s associated app. Device profiles may support transferring formats Attune cannot read.
 
-This imports a snapshot rather than connecting or synchronizing the two libraries. Changes made later in either app do not propagate. Export to Calibre is deferred.
+## Current limits
 
-Calibre-specific features such as arbitrary custom columns, ratings, annotations, saved searches, virtual libraries, reading positions, and additional ebook formats are not imported. Matching titles, authors, and ISBNs do not merge distinct EPUB files. The source retains its unsupported metadata and formats. Attune currently represents one language per book.
+Attune imports Calibre reading state without replacing newer local progress. Only locators Attune can validate are navigable; unresolved records remain visible in the annotations sidebar. There is no Calibre export or live synchronization. EPUB files keep their original bytes; Attune’s separate cover is used in the library and does not rewrite the source file.
+
+The optional library scan checks common home folders with limits on depth, time, and entry count. It skips hidden, system-cache, build, and symlink paths; use **Choose folder** for libraries elsewhere.
 
 ## Validation
 
-The importer is tested with generated database fixtures and an isolated library created by Calibre 9.16. Compatibility relies on the standard Calibre tables; it does not copy Calibre code or require its runtime. Database paths and format filenames are checked to reject files outside the selected library.
+The importer uses generated SQLite fixtures and isolated Calibre libraries. It opens the database read-only and checks database-relative book and format paths before copying. See the [capability matrix](capability-matrix.md) for the current tested scope.

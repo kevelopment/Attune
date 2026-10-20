@@ -65,7 +65,7 @@ export default function Welcome({ libraries: initialLibraries, error, onRetry, o
             <button className="welcome-button welcome-primary" disabled={working || completionBusy} aria-busy={completionBusy} onClick={() => void complete()}>{completionBusy ? 'Setting up…' : 'Get started'}</button>
           </article>
           <article className="welcome-choice welcome-import-choice">
-            <div className="welcome-choice-heading"><div className="welcome-choice-icon"><FolderOpen size={19}/></div><div className="welcome-choice-copy"><h2>Import Calibre</h2><p>Copy EPUBs, metadata and covers into Attune.</p></div></div>
+            <div className="welcome-choice-heading"><div className="welcome-choice-icon"><FolderOpen size={19}/></div><div className="welcome-choice-copy"><h2>Import Calibre</h2><p>Copy books, metadata and covers into Attune.</p></div></div>
             {libraries.length > 0 && <div className="welcome-library-list" aria-label="Calibre libraries found">{libraries.map(item => <div className="welcome-library" key={item.path}><div><strong>{item.name}</strong><span title={item.path}>{item.path}</span></div><button className="welcome-button" disabled={working || completionBusy} onClick={() => void importFrom(() => onImport(item.path))}>Import</button></div>)}</div>}
             <div className="welcome-import-actions">
               <button className="welcome-button" disabled={working || completionBusy} onClick={() => void importFrom(onBrowse)}><FolderOpen size={15}/>{working ? 'Importing…' : 'Choose folder'}</button>

@@ -1,4 +1,6 @@
-import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, ImportResult, Progress, ImportProgress, UpdateState, ReadingProgress, ReadingBookmark } from './types'
+import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, DevicePreferences, ImportResult, Progress, ImportProgress, UpdateState, ReadingProgress, ReadingBookmark, ReaderLocation } from './types'
+
+export type ReaderAnnotation = { id: string; bookId: string; assetId?: string; format?: string; kind: string; text?: string; note?: string; quote?: string; cfi?: string; timestamp?: string; status: 'placed' | 'unplaced' }
 
 const isPreview = new URLSearchParams(location.search).has('preview') || new URLSearchParams(location.search).get('welcome') === '1' || (import.meta.env.DEV && import.meta.env.VITE_ATTUNE_PREVIEW === '1')
 const previewStateError = new URLSearchParams(location.search).get('state') === 'error'
@@ -26,9 +28,11 @@ const previewDevice: Device = { ...previewState.devices[0] }
 let listeners: ((p: Progress) => void)[] = []
 let importListeners: ((p: ImportProgress) => void)[] = []
 let previewTransfer: Progress | null = null
-let previewDeviceBooks: DeviceBook[] = previewBooks.slice(0, 6).map((book, i) => ({ path: `documents/${book.title}.mobi`, name: `${book.title}.mobi`, size: 257000 + i * 113000, bookID: book.id, title: book.title, authors: book.authors, language: book.language, coverURL: book.coverURL }))
+let previewDeviceBooks: DeviceBook[] = previewBooks.slice(0, 6).map((book, i) => ({ path: `documents/${book.title}.mobi`, name: `${book.title}.mobi`, size: 257000 + i * 113000, bookID: book.id, canRead: true, title: book.title, authors: book.authors, language: book.language, coverURL: book.coverURL }))
 const previewReadingProgress = new Map<string, ReadingProgress>()
 const previewReadingBookmarks = new Map<string, ReadingBookmark[]>()
+const previewReaderLocations = new Map<string, ReaderLocation>()
+const previewDevicePreferences = new Map<string, DevicePreferences>()
 let previewBookmarkID = 1
 
 function api(name: string, ...args: unknown[]) {
@@ -175,10 +179,37 @@ export const bridge = {
     if (!isPreview) return api('DeleteBook', id)
     previewState.books = previewState.books.filter(b => b.id !== id)
   },
+  async openBookFile(bookID: string, fileID: string): Promise<void> {
+    if (!isPreview) return api('OpenBookFile', bookID, fileID)
+  },
+  bookFileURL(bookID: string, fileID: string): string {
+    return `/book-files/${encodeURIComponent(bookID)}/${encodeURIComponent(fileID)}`
+  },
+  bookArchiveURL(bookID: string, fileID: string): string {
+    return `/book-archives/${encodeURIComponent(bookID)}/${encodeURIComponent(fileID)}/manifest`
+  },
+  async attachBookFiles(bookID: string): Promise<ImportResult> {
+    if (!isPreview) return api('AttachBookFiles', bookID)
+    return { imported: 0, duplicates: 0, errors: [], bookIDs: [bookID] }
+  },
   async selectDevice(): Promise<Device | null> {
     if (!isPreview) return api('SelectDevice')
     if (!previewState.devices.some(device => device.id === previewDevice.id)) previewState.devices = [...previewState.devices, previewDevice]
     return previewDevice
+  },
+  async getDevicePreferences(id: string): Promise<DevicePreferences> {
+    if (!isPreview) return api('GetDevicePreferences', id)
+    const saved = previewDevicePreferences.get(id)
+    const device = previewState.devices.find(item => item.id === id)
+    return saved ? { ...saved, folders: [...saved.folders], formats: [...saved.formats] } : { folders: [...(device?.bookFolders ?? ['documents'])], formats: [...(device?.transferFormats ?? [])], customized: false }
+  },
+  async saveDevicePreferences(id: string, folders: string[], formats: string[]): Promise<void> {
+    if (!isPreview) return api('SaveDevicePreferences', id, folders, formats)
+    previewDevicePreferences.set(id, { folders: [...folders], formats: [...formats], customized: true })
+  },
+  async resetDevicePreferences(id: string): Promise<void> {
+    if (!isPreview) return api('ResetDevicePreferences', id)
+    previewDevicePreferences.delete(id)
   },
   async getDeviceBooks(id: string): Promise<DeviceBook[]> { return isPreview ? previewDeviceBooks : api('GetDeviceBooks', id) },
   async getBookPreview(id: string): Promise<BookPreview> {
@@ -194,6 +225,21 @@ export const bridge = {
   async saveReadingProgress(id: string, chapterIndex: number, position: number): Promise<void> {
     if (!isPreview) return api('SaveReadingProgress', id, chapterIndex, position)
     previewReadingProgress.set(id, { bookID: id, chapterIndex, position, updatedAt: new Date().toISOString() })
+  },
+  async getReaderLocation(bookID: string, assetID: string): Promise<ReaderLocation | null> {
+    if (!isPreview) {
+      const location: ReaderLocation = await api('GetReaderLocation', bookID, assetID)
+      return location.found ? location : null
+    }
+    return previewReaderLocations.get(`${bookID}\0${assetID}`) ?? null
+  },
+  async saveReaderLocation(bookID: string, assetID: string, schemaVersion: number, locator: unknown): Promise<void> {
+    if (!isPreview) return api('SaveReaderLocation', bookID, assetID, schemaVersion, JSON.stringify(locator))
+    previewReaderLocations.set(`${bookID}\0${assetID}`, { bookId: bookID, assetId: assetID, found: true, schemaVersion, locator, updatedAt: new Date().toISOString() })
+  },
+  async getReaderAnnotations(bookID: string, assetID: string): Promise<ReaderAnnotation[]> {
+    if (!isPreview) return api('GetReaderAnnotations', bookID, assetID)
+    return []
   },
   async getReadingBookmarks(id: string): Promise<ReadingBookmark[]> {
     if (!isPreview) return api('GetReadingBookmarks', id)

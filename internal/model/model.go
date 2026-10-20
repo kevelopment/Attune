@@ -1,27 +1,48 @@
 package model
 
+import "encoding/json"
+
 type Book struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	Authors       []string          `json:"authors"`
-	Subjects      []string          `json:"subjects"`
-	Publisher     string            `json:"publisher,omitempty"`
-	Published     string            `json:"published,omitempty"`
-	Identifiers   map[string]string `json:"identifiers,omitempty"`
-	Description   string            `json:"description,omitempty"`
-	Series        string            `json:"series,omitempty"`
-	SeriesIndex   string            `json:"seriesIndex,omitempty"`
-	AuthorSort    []string          `json:"authorSort,omitempty"`
-	TitleSort     string            `json:"titleSort,omitempty"`
-	PageCount     int               `json:"pageCount,omitempty"`
-	FileSize      int64             `json:"fileSize,omitempty"`
-	ModifiedAt    string            `json:"modifiedAt,omitempty"`
-	Language      string            `json:"language"`
-	SHA256        string            `json:"sha256"`
-	CoverURL      string            `json:"coverURL"`
-	AddedAt       string            `json:"addedAt"`
-	ImportBatchID string            `json:"importBatchID,omitempty"`
-	Revision      int               `json:"revision"`
+	ID              string            `json:"id"`
+	Title           string            `json:"title"`
+	Authors         []string          `json:"authors"`
+	Subjects        []string          `json:"subjects"`
+	Publisher       string            `json:"publisher,omitempty"`
+	Published       string            `json:"published,omitempty"`
+	Identifiers     map[string]string `json:"identifiers,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Series          string            `json:"series,omitempty"`
+	SeriesIndex     string            `json:"seriesIndex,omitempty"`
+	AuthorSort      []string          `json:"authorSort,omitempty"`
+	TitleSort       string            `json:"titleSort,omitempty"`
+	PageCount       int               `json:"pageCount,omitempty"`
+	FileSize        int64             `json:"fileSize,omitempty"`
+	Files           []BookFile        `json:"files,omitempty"`
+	PreferredFileID string            `json:"preferredFileID,omitempty"`
+	CustomMetadata  json.RawMessage   `json:"customMetadata,omitempty"`
+	ModifiedAt      string            `json:"modifiedAt,omitempty"`
+	Language        string            `json:"language"`
+	SHA256          string            `json:"sha256"`
+	CoverURL        string            `json:"coverURL"`
+	AddedAt         string            `json:"addedAt"`
+	ImportBatchID   string            `json:"importBatchID,omitempty"`
+	Revision        int               `json:"revision"`
+}
+
+// BookFile describes an immutable imported format asset. RelativePath is
+// informational; the library store validates it before opening the file.
+type BookFile struct {
+	ID           string `json:"id"`
+	BookID       string `json:"bookID"`
+	Format       string `json:"format"`
+	Filename     string `json:"filename"`
+	RelativePath string `json:"relativePath,omitempty"`
+	SHA256       string `json:"sha256"`
+	Size         int64  `json:"size"`
+	Preferred    bool   `json:"preferred"`
+	CanRead      bool   `json:"canRead"`
+	CanTransfer  bool   `json:"canTransfer"`
+	CanConvert   bool   `json:"canConvert"`
 }
 
 // BookMetadataEdit replaces the editable descriptive metadata while leaving
@@ -65,11 +86,19 @@ type ReadingBookmark struct {
 }
 
 type Device struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Root       string `json:"root"`
-	FreeBytes  uint64 `json:"freeBytes"`
-	TotalBytes uint64 `json:"totalBytes"`
+	ID                        string   `json:"id"`
+	Name                      string   `json:"name"`
+	Root                      string   `json:"root"`
+	TransportDeviceID         string   `json:"transportDeviceID,omitempty"`
+	StorageID                 string   `json:"storageID,omitempty"`
+	FreeBytes                 uint64   `json:"freeBytes"`
+	TotalBytes                uint64   `json:"totalBytes"`
+	Transport                 string   `json:"transport,omitempty"`
+	ProfileID                 string   `json:"profileID,omitempty"`
+	BookFolders               []string `json:"bookFolders,omitempty"`
+	TransferFormats           []string `json:"transferFormats,omitempty"`
+	AllowEPUBToMOBI           bool     `json:"allowEPUBToMOBI,omitempty"`
+	RequiresExplicitSelection bool     `json:"requiresExplicitSelection,omitempty"`
 }
 
 type DeviceBook struct {
@@ -77,6 +106,7 @@ type DeviceBook struct {
 	Name        string            `json:"name"`
 	Size        int64             `json:"size"`
 	BookID      string            `json:"bookID"`
+	CanRead     bool              `json:"canRead"`
 	Title       string            `json:"title"`
 	Authors     []string          `json:"authors"`
 	Language    string            `json:"language,omitempty"`

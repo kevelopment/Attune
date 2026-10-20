@@ -9,7 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "foliate-js": "git+https://github.com/johnfactotum/foliate-js.git#78914aef4466eb960965702401634c2cb348e9b1",
     "lucide-react": "^0.468.0",
+    "pdfjs-dist": "6.4.299",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

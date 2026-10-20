@@ -108,7 +108,7 @@ func TestImportCalibreLibraryAtCompletesOnlyAfterSuccessfulRead(t *testing.T) {
 	}
 	root, _ := makeImportCalibreLibrary(t)
 	result, err := a.ImportCalibreLibraryAt(root)
-	if err != nil || result.Imported != 1 {
+	if err != nil || result.Imported != 2 || len(result.BookIDs) != 2 {
 		t.Fatalf("Calibre import = %#v, %v", result, err)
 	}
 	settings, err = readLibrarySettings(a.configPath)

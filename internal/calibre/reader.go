@@ -4,6 +4,7 @@ package calibre
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -22,12 +23,29 @@ import (
 // import. EPUBPath is empty when the record has no EPUB format or its file is
 // missing. Issue explains a bad/missing path without hiding the record.
 type Book struct {
-	ID        string
-	Metadata  model.Book
-	EPUBPath  string
-	CoverPath string
-	Formats   []string
-	Issue     string
+	ID           string
+	LibraryUUID  string
+	UUID         string
+	Metadata     model.Book
+	RawMetadata  json.RawMessage
+	CustomValues json.RawMessage
+	ReadingState json.RawMessage
+	Assets       []Asset
+	EPUBPath     string
+	CoverPath    string
+	Formats      []string
+	Issue        string
+}
+
+// Asset is a format file recorded by Calibre. Path is populated only when the
+// source file exists and passes the library-containment checks; Issue preserves
+// a per-file failure without hiding other formats on the same book.
+type Asset struct {
+	Format string
+	Path   string
+	Name   string
+	Size   int64
+	Issue  string
 }
 
 // ReadLibrary reads metadata.db in SQLite read-only mode. It performs no
@@ -103,11 +121,34 @@ func ReadLibrary(root string) ([]Book, error) {
 		return nil, fmt.Errorf("close Calibre books query: %w", closeErr)
 	}
 	books := make([]Book, 0, len(bases))
+	libraryUUID := readLibraryUUID(tx)
+	rawBooks, err := readRawBookRows(tx)
+	if err != nil {
+		return nil, fmt.Errorf("read Calibre raw metadata: %w", err)
+	}
+	customValues, err := readCustomValues(tx)
+	if err != nil {
+		return nil, fmt.Errorf("read Calibre custom columns: %w", err)
+	}
+	readingState, err := readReadingState(tx)
+	if err != nil {
+		return nil, fmt.Errorf("read Calibre reading state: %w", err)
+	}
 	for _, row := range bases {
 		if row.id < 1 {
 			continue
 		}
-		b := Book{ID: strconv.FormatInt(row.id, 10)}
+		b := Book{ID: strconv.FormatInt(row.id, 10), LibraryUUID: libraryUUID}
+		if raw, ok := rawBooks[row.id]; ok {
+			b.UUID, _ = raw["uuid"].(string)
+			b.RawMetadata, _ = json.Marshal(raw)
+		}
+		if values, ok := customValues[row.id]; ok {
+			b.CustomValues, _ = json.Marshal(values)
+		}
+		if state, ok := readingState[row.id]; ok {
+			b.ReadingState, _ = json.Marshal(state)
+		}
 		b.Metadata = model.Book{
 			ID: b.ID, Title: row.title.String, AddedAt: calibreDate(row.added.String),
 			Published: calibreDate(row.published.String), TitleSort: row.titleSort.String,
@@ -139,6 +180,197 @@ func ReadLibrary(root string) ([]Book, error) {
 type queryer interface {
 	Query(string, ...any) (*sql.Rows, error)
 	QueryRow(string, ...any) *sql.Row
+}
+
+func readLibraryUUID(db queryer) string {
+	columns, err := tableColumns(db, "library_id")
+	if err != nil || !columns["uuid"] {
+		return ""
+	}
+	var value sql.NullString
+	if err := db.QueryRow(`SELECT uuid FROM library_id LIMIT 1`).Scan(&value); err != nil {
+		return ""
+	}
+	return value.String
+}
+
+func readRawBookRows(db queryer) (map[int64]map[string]any, error) {
+	rows, err := db.Query(`SELECT * FROM books ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectRowsByBook(rows, "id")
+}
+
+func readCustomValues(db queryer) (map[int64][]map[string]any, error) {
+	columns, err := tableColumns(db, "custom_columns")
+	if err != nil {
+		if isMissingTableError(err) {
+			return map[int64][]map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if !columns["id"] {
+		return map[int64][]map[string]any{}, nil
+	}
+	rows, err := db.Query(`SELECT * FROM custom_columns ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defs, err := collectRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64][]map[string]any)
+	for _, def := range defs {
+		id, ok := integerValue(def["id"])
+		if !ok || id < 1 {
+			continue
+		}
+		table := fmt.Sprintf("custom_column_%d", id)
+		cols, err := tableColumns(db, table)
+		if err != nil {
+			if isMissingTableError(err) {
+				continue
+			}
+			return nil, err
+		}
+		if !cols["book"] {
+			continue
+		}
+		quoted := `"` + table + `"`
+		valueRows, err := db.Query(`SELECT * FROM ` + quoted + ` ORDER BY book`)
+		if err != nil {
+			return nil, err
+		}
+		bookRows, err := collectRowsGroupedByBook(valueRows, "book")
+		if err != nil {
+			return nil, err
+		}
+		for bookID, value := range bookRows {
+			for _, row := range value {
+				result[bookID] = append(result[bookID], map[string]any{"definition": def, "value": row})
+			}
+		}
+	}
+	return result, nil
+}
+
+func readReadingState(db queryer) (map[int64]map[string][]map[string]any, error) {
+	result := make(map[int64]map[string][]map[string]any)
+	for _, table := range []string{"last_read_positions", "annotations"} {
+		cols, err := tableColumns(db, table)
+		if err != nil {
+			if isMissingTableError(err) {
+				continue
+			}
+			return nil, err
+		}
+		if !cols["book"] {
+			continue
+		}
+		rows, err := db.Query(`SELECT * FROM "` + table + `" ORDER BY book`)
+		if err != nil {
+			return nil, err
+		}
+		byBook, err := collectRowsGroupedByBook(rows, "book")
+		if err != nil {
+			return nil, err
+		}
+		for id, records := range byBook {
+			result[id] = ensureState(result[id])
+			result[id][table] = append(result[id][table], records...)
+		}
+	}
+	return result, nil
+}
+
+func ensureState(state map[string][]map[string]any) map[string][]map[string]any {
+	if state == nil {
+		return make(map[string][]map[string]any)
+	}
+	return state
+}
+
+func collectRowsByBook(rows *sql.Rows, key string) (map[int64]map[string]any, error) {
+	grouped, err := collectRowsGroupedByBook(rows, key)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64]map[string]any, len(grouped))
+	for id, records := range grouped {
+		if len(records) > 0 {
+			result[id] = records[0]
+		}
+	}
+	return result, nil
+}
+
+func collectRowsGroupedByBook(rows *sql.Rows, key string) (map[int64][]map[string]any, error) {
+	defer rows.Close()
+	items, err := collectRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64][]map[string]any, len(items))
+	for _, item := range items {
+		id, ok := integerValue(item[key])
+		if ok {
+			result[id] = append(result[id], item)
+		}
+	}
+	return result, nil
+}
+
+func collectRows(rows *sql.Rows) ([]map[string]any, error) {
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		values := make([]any, len(columns))
+		dest := make([]any, len(columns))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		item := make(map[string]any, len(columns))
+		for i, name := range columns {
+			item[name] = jsonValue(values[i])
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func jsonValue(value any) any {
+	if bytes, ok := value.([]byte); ok {
+		return string(bytes)
+	}
+	return value
+}
+
+func integerValue(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		return n, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func validateSchema(db queryer) error {
@@ -274,53 +506,54 @@ func readBookAssets(root string, db queryer, id int64, rel string, hasCover bool
 	if err != nil {
 		return err
 	}
-	var epubName string
-	var epubSize int64
+	defer rows.Close()
+	bookDir, bookDirErr := safeBookPath(root, rel)
 	for rows.Next() {
 		var format, name string
 		var size int64
 		if err = rows.Scan(&format, &size, &name); err != nil {
-			rows.Close()
 			return err
 		}
-		format = strings.ToUpper(strings.TrimSpace(format))
-		if format != "" {
-			b.Formats = append(b.Formats, format)
+		format = normalizeFormat(format)
+		if format == "" {
+			continue
 		}
-		if strings.EqualFold(format, "EPUB") {
-			epubName, epubSize = name, size
+		b.Formats = append(b.Formats, format)
+		asset := Asset{Format: format, Name: name + "." + strings.ToLower(format), Size: size}
+		if bookDirErr != nil {
+			asset.Issue = bookDirErr.Error()
+		} else if filepath.Base(name) != name || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
+			asset.Issue = "Calibre format filename is not a plain filename"
+		} else {
+			asset.Path, err = safeExistingFile(root, filepath.Join(bookDir, asset.Name))
+			if err != nil {
+				asset.Issue = fmt.Sprintf("recorded %s is unavailable: %v", format, err)
+			}
 		}
+		if format == "EPUB" && asset.Path != "" {
+			b.EPUBPath = asset.Path
+			b.Metadata.FileSize = size
+		} else if format == "EPUB" && b.Issue == "" {
+			b.Issue = asset.Issue
+		}
+		b.Assets = append(b.Assets, asset)
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
 		return err
 	}
-	rows.Close()
 	sort.Strings(b.Formats)
 	b.Formats = unique(b.Formats)
-	bookDir, err := safeBookPath(root, rel)
-	if err != nil {
-		return err
-	}
-	if epubName != "" {
-		if filepath.Base(epubName) != epubName || epubName == "." || epubName == ".." || strings.ContainsAny(epubName, `/\\`) {
-			return errors.New("Calibre EPUB filename is not a plain filename")
-		}
-		candidate := filepath.Join(bookDir, epubName+".epub")
-		candidate, err = safeExistingFile(root, candidate)
-		if err != nil {
-			return fmt.Errorf("recorded EPUB is unavailable: %w", err)
-		}
-		b.EPUBPath = candidate
-		b.Metadata.FileSize = epubSize
-	}
-	if hasCover {
+	if hasCover && bookDirErr == nil {
 		candidate, err := safeExistingFile(root, filepath.Join(bookDir, "cover.jpg"))
 		if err == nil {
 			b.CoverPath = candidate
 		}
 	}
 	return nil
+}
+
+func normalizeFormat(value string) string {
+	return strings.ToUpper(strings.TrimSpace(value))
 }
 
 func readPageCount(db queryer, id int64, b *Book) error {

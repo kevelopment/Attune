@@ -44,15 +44,15 @@
 
 ## A little less library admin
 
-A local home for your EPUBs: organize your collection, edit metadata and covers, preview books, and send them to a reader over USB. Your original files stay intact. No account or Calibre installation required.
+A local home for your books: organize files and metadata, read common ebook formats, and send compatible files to reader storage over USB or MTP. Your original Calibre library stays untouched. No account or Calibre installation required.
 
 ### Bring your Calibre library
 
-Start fresh or import EPUBs, metadata, and covers from an existing Calibre library. Attune copies books into its own library and leaves Calibre’s library untouched. [Import details](docs/calibre-import.md).
+Start fresh or import books, metadata, and covers from an existing Calibre library. Attune copies format files into its own library and leaves Calibre’s library untouched. [Import details](docs/calibre-import.md).
 
 ### A companion for your reader
 
-Browse and manage a mounted USB Kindle, with automatic legacy MOBI conversion for the original Kindle 1 and 2. USB support is experimental on macOS, Windows, and Linux; physical-device testing is still limited. More reader families, including Tolino and Kobo, are planned.
+Browse and manage mounted USB storage or MTP readers with reader-family profiles, including Kindle, Kobo, PocketBook, Tolino, NOOK, BOOX/Onyx, and Supernote. Unknown storage can be configured with per-device folders and formats. Profiles are conservative transfer defaults, not hardware certification; compatibility still needs testing on real devices.
 
 ## Download
 
@@ -70,7 +70,7 @@ Download Attune for your operating system and CPU from the [Releases page](https
 2. If Gatekeeper says “Apple could not verify Attune,” choose **Done**, then open **System Settings → Privacy & Security** and select **Open Anyway** for Attune.
 3. Choose **Open** in the confirmation prompt. See [Apple’s instructions](https://support.apple.com/en-us/102445) for details. Current macOS downloads are ad-hoc signed and not Apple-notarized, so this may be needed on first launch.
 
-Windows downloads are not Authenticode-signed. Linux requires GTK 3 and WebKit2GTK 4.1; Windows requires WebView2. See the [release guide](docs/releasing.md) for installation and USB requirements.
+Windows downloads are not Authenticode-signed. Linux requires GTK 3, WebKit2GTK 4.1, and libmtp runtime libraries; Windows requires WebView2. See the [release guide](docs/releasing.md) for installation and device requirements.
 
 ## Software updates
 
@@ -86,11 +86,11 @@ See [releasing](docs/releasing.md) for the tag-driven build and publication work
 
 ## Where things stand
 
-Attune is an early-stage project focused on EPUB libraries and USB readers. PDF import and support for additional reader families are future work.
+Attune is an early-stage project. Built-in reading supports DRM-free EPUB, MOBI/AZW3, FB2, TXT, PDF, CBZ, and CBR. Mounted USB and MTP transports are implemented, but broad model and firmware verification remains ongoing. Calibre positions, bookmarks, highlights, and notes are imported; items Attune cannot place are retained as unresolved annotations.
 
 Cloud sync is not planned. Attune is designed to work locally without requiring an account.
 
-For current capabilities and limits, see the [development guide](docs/development.md), [Calibre import guide](docs/calibre-import.md), and [release notes](https://github.com/kevelopment/Attune/releases).
+For current capabilities and limits, see the [capability matrix](docs/capability-matrix.md) and [Calibre import guide](docs/calibre-import.md).
 
 ## Contributing
 
@@ -100,4 +100,4 @@ All contributions are welcome. Small, focused changes are easier to review. Pull
 
 Attune takes inspiration from [Calibre](https://github.com/kovidgoyal/calibre), created by Kovid Goyal. Thank you to Kovid and the Calibre community for building the foundation that so many ebook tools and readers rely on.
 
-[MIT](LICENSE), with separate [third-party notices](THIRD_PARTY_NOTICES.md). Thanks to [Wails](https://wails.io), [Kindling](https://github.com/ciscoriordan/kindling), and the open-source ebook community. The name is a small nod to resting and preparing for the next journey at a bonfire.
+[MIT](LICENSE), with separate [third-party notices](docs/third-party-notices.md). Thanks to [Wails](https://wails.io), [Kindling](https://github.com/ciscoriordan/kindling), and the open-source ebook community. The name is a small nod to resting and preparing for the next journey at a bonfire.

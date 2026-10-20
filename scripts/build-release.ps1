@@ -10,6 +10,9 @@ $env:GOCACHE = if ($env:GOCACHE) { $env:GOCACHE } else { Join-Path $root ".cache
 $env:GOBIN = if ($env:GOBIN) { $env:GOBIN } else { Join-Path $env:GOPATH "bin" }
 $env:PATH = "$env:GOBIN;$env:PATH"
 $env:CGO_ENABLED = "1"
+$wpdBuild = Join-Path $PSScriptRoot "build-wpd-helper.ps1"
+& $wpdBuild
+if ($LASTEXITCODE -ne 0) { throw "WPD helper build failed with exit code $LASTEXITCODE" }
 $helper = Join-Path $root "third_party/kindling/windows-amd64/kindling-cli.exe"
 if (!(Test-Path $helper)) { throw "Missing pinned helper: $helper" }
 if (!(Test-Path (Join-Path $env:GOBIN "wails.exe"))) {
@@ -28,6 +31,7 @@ try {
   $dist = Join-Path $root "dist"
   New-Item -ItemType Directory -Force -Path "$stage/licenses", $dist | Out-Null
   Copy-Item (Join-Path $root "build/bin/Attune.exe") $stage
+  Copy-Item (Join-Path $root "build/bin/wpd-helper.exe") (Join-Path $stage "wpd-helper.exe")
   Copy-Item $helper (Join-Path $stage "kindling-cli.exe")
   Copy-Item (Join-Path $root "LICENSE") (Join-Path $stage "licenses/Attune-LICENSE.txt")
   Copy-Item (Join-Path $root "THIRD_PARTY_NOTICES.md") (Join-Path $stage "licenses")
@@ -38,8 +42,9 @@ try {
 Attune Windows amd64 (experimental)
 
 Run Attune.exe. Microsoft Edge WebView2 Runtime is required.
-USB Kindle discovery, transfer, and eject are experimental and use PowerShell Storage cmdlets. A removable volume with a drive letter and stable IDs is required.
-Physical-device validation is limited; check that the Kindle appears as a mounted drive before transferring.
+USB storage discovery and eject use Windows Storage APIs. MTP discovery and transfer use Windows Portable Devices through wpd-helper.exe.
+The WPD helper requires Windows Portable Devices components included with supported Windows versions. It is built with Visual Studio C++ Build Tools and the Windows SDK.
+Physical-device validation is limited; MTP availability depends on the device exposing its contents over WPD.
 "@ | Set-Content -Encoding utf8 (Join-Path $stage "INSTALL.txt")
   Compress-Archive -Path "$stage/*" -DestinationPath (Join-Path $dist "Attune-windows-amd64.zip") -Force
 } finally {

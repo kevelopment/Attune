@@ -47,6 +47,197 @@ func TestSelectAndDiscoverRequireMountedExternalVolume(t *testing.T) {
 	}
 }
 
+func TestDiscoverKnownNonKindleAndFilterByProfileFormats(t *testing.T) {
+	root := t.TempDir()
+	books := filepath.Join(root, "Books")
+	if err := os.Mkdir(books, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"story.epub": "epub", "manual.pdf": "pdf", "other.cbr": "comic", "notes.txt": "text",
+	} {
+		if err := os.WriteFile(filepath.Join(books, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v := volume{Root: root, ID: "kobo-1", Name: "Kobo Clara", External: true}
+	m := testManager(root, v.ID, 1<<20)
+	m.volumes = func() ([]volume, error) { return []volume{v}, nil }
+	discovered, err := m.Discover()
+	if err != nil || len(discovered) != 1 {
+		t.Fatalf("Discover() = %+v, %v", discovered, err)
+	}
+	device := discovered[0]
+	if device.ProfileID != "kobo" || device.Transport != "usb-storage" || device.RequiresExplicitSelection {
+		t.Fatalf("unexpected discovered Kobo profile: %+v", device)
+	}
+	booksFound, err := m.List(device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(booksFound) != 2 {
+		t.Fatalf("Kobo profile should list EPUB/PDF only, got %+v", booksFound)
+	}
+	for _, book := range booksFound {
+		if book.Name != "story.epub" && book.Name != "manual.pdf" {
+			t.Errorf("unsupported Kobo transfer format listed: %s", book.Name)
+		}
+	}
+	source := filepath.Join(t.TempDir(), "book.mobi")
+	if err := os.WriteFile(source, []byte("mobi"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send(context.Background(), device, source, "book.mobi"); err == nil {
+		t.Fatal("unsupported MOBI sent to Kobo profile")
+	}
+}
+
+func TestUnknownMountedVolumeRequiresManualSelectionAndUsesGenericFolders(t *testing.T) {
+	root := t.TempDir()
+	booksDir := filepath.Join(root, "Books")
+	docsDir := filepath.Join(root, "Documents")
+	if err := os.Mkdir(booksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(docsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string]string{
+		filepath.Join(booksDir, "novel.fb2"):  "fb2",
+		filepath.Join(docsDir, "guide.pdf"):   "pdf",
+		filepath.Join(docsDir, "archive.cbr"): "cbr",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v := volume{Root: root, ID: "usb-unknown", Name: "Removable disk", External: true}
+	m := testManager(root, v.ID, 1<<20)
+	m.volumes = func() ([]volume, error) { return []volume{v}, nil }
+	if devices, err := m.Discover(); err != nil || len(devices) != 0 {
+		t.Fatalf("unknown storage should not be auto-discovered: %+v, %v", devices, err)
+	}
+	device, err := m.SelectVolume(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if device.ProfileID != "generic" || !device.RequiresExplicitSelection || device.Transport != "usb-storage" {
+		t.Fatalf("unexpected generic selected-volume profile: %+v", device)
+	}
+	booksFound, err := m.List(device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(booksFound) != 3 {
+		t.Fatalf("generic profile should list transferable formats in candidate folders, got %+v", booksFound)
+	}
+	source := filepath.Join(t.TempDir(), "book.txt")
+	if err := os.WriteFile(source, []byte("text"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send(context.Background(), device, source, "new book.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(booksDir, "new book.txt")); err != nil || string(got) != "text" {
+		t.Fatalf("generic transfer did not use preferred Books folder: %q, %v", got, err)
+	}
+}
+
+func TestSelectedUnknownVolumeCanCreateBooksFolder(t *testing.T) {
+	root := t.TempDir()
+	v := volume{Root: root, ID: "usb-empty", Name: "Generic disk", External: true}
+	m := testManager(root, v.ID, 1<<20)
+	m.volumes = func() ([]volume, error) { return []volume{v}, nil }
+	device, err := m.SelectVolume(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "book.epub")
+	if err := os.WriteFile(source, []byte("epub"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send(context.Background(), device, source, "book.epub"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "Books", "book.epub")); err != nil {
+		t.Fatalf("Books candidate folder was not created: %v", err)
+	}
+}
+
+func TestNestedBookFolderPreferencesListSendAndRemove(t *testing.T) {
+	root := t.TempDir()
+	volumeInfo := volume{Root: root, ID: "nested-usb", Name: "Generic disk", External: true}
+	m := testManager(root, volumeInfo.ID, 1<<20)
+	m.volumes = func() ([]volume, error) { return []volume{volumeInfo}, nil }
+	device, err := m.SelectVolume(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device.BookFolders = []string{"Library/Fiction"}
+	device.TransferFormats = []string{"epub"}
+	bookFolder := filepath.Join(root, "Library", "Fiction")
+	if err := os.MkdirAll(bookFolder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bookFolder, "existing.epub"), []byte("existing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bookFolder, "ignored.pdf"), []byte("pdf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := m.List(device)
+	if err != nil || len(listed) != 1 || listed[0].Path != "Library/Fiction/existing.epub" {
+		t.Fatalf("nested folder listing = %+v, %v", listed, err)
+	}
+	source := filepath.Join(t.TempDir(), "new.epub")
+	if err := os.WriteFile(source, []byte("new book"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := m.Send(context.Background(), device, source, "new.epub")
+	if err != nil || rel != "Library/Fiction/new.epub" {
+		t.Fatalf("nested transfer path = %q, %v", rel, err)
+	}
+	if err := m.Remove(device, rel); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(bookFolder, "new.epub")); !os.IsNotExist(err) {
+		t.Fatalf("nested transfer still exists after removal: %v", err)
+	}
+	if err := m.Remove(device, "Library/../outside.epub"); err == nil {
+		t.Fatal("removal accepted traversal path")
+	}
+}
+
+func TestNestedBookFoldersRejectSymlinksAndUnsafeAncestors(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	volumeInfo := volume{Root: root, ID: "unsafe-usb", Name: "Generic disk", External: true}
+	m := testManager(root, volumeInfo.ID, 1<<20)
+	m.volumes = func() ([]volume, error) { return []volume{volumeInfo}, nil }
+	device, err := m.SelectVolume(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device.BookFolders = []string{"linked/books"}
+	if _, err := m.List(device); err == nil {
+		t.Fatal("listing traversed a symlinked book-folder ancestor")
+	}
+	source := filepath.Join(t.TempDir(), "book.epub")
+	if err := os.WriteFile(source, []byte("book"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send(context.Background(), device, source, "book.epub"); err == nil {
+		t.Fatal("transfer created content through a symlinked book-folder ancestor")
+	}
+	device.BookFolders = []string{"../outside"}
+	if _, err := m.List(device); err == nil {
+		t.Fatal("listing accepted a traversal folder preference")
+	}
+}
+
 func TestMissingDeviceRootReturnsDisconnectedError(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Kindle")
 	m := testManager(root, "usb-1", 100)

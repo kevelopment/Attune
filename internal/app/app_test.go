@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -68,7 +70,7 @@ func testApp(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	d := model.Device{ID: "fake-kindle", Name: "Kindle", Root: filepath.Join(t.TempDir(), "device")}
+	d := model.Device{ID: "fake-kindle", Name: "Kindle", Root: filepath.Join(t.TempDir(), "device"), Transport: "usb-storage", ProfileID: "kindle", BookFolders: []string{"documents", "Documents"}, TransferFormats: []string{"azw3", "mobi", "prc"}, AllowEPUBToMOBI: true}
 	return &App{ctx: context.Background(), root: root, store: store, manager: &fakeManager{device: d}, converter: &fakeConverter{}, converterVersion: "test", selected: map[string]model.Device{}, emit: func(string, ...interface{}) {}}
 }
 
@@ -84,6 +86,9 @@ func makeImportCalibreLibrary(t *testing.T) (string, string) {
 	}
 	source := filepath.Join(bookDir, "Book - Author.epub")
 	writeTestEPUB(t, source, "Calibre metadata title")
+	if err := os.WriteFile(filepath.Join(bookDir, "Book - Author.pdf"), []byte("PDF fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	db, err := sql.Open("sqlite3", filepath.Join(root, "metadata.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -91,9 +96,22 @@ func makeImportCalibreLibrary(t *testing.T) (string, string) {
 	_, err = db.Exec(`CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT, timestamp TEXT, pubdate TEXT, author_sort TEXT, sort TEXT, series_index REAL, path TEXT, has_cover INTEGER, last_modified TEXT);
 		CREATE TABLE data(id INTEGER PRIMARY KEY, book INTEGER, format TEXT, uncompressed_size INTEGER, name TEXT);
 		INSERT INTO books VALUES(1,'Calibre metadata title','2024-01-02 03:04:05+00:00',NULL,NULL,NULL,1,'Author/Book (1)',0,'2024-01-03 00:00:00+00:00');
-		INSERT INTO books VALUES(2,'Metadata only','2024-01-02 03:04:05+00:00',NULL,NULL,NULL,1,'Author/Other (2)',0,'2024-01-03 00:00:00+00:00');
 		INSERT INTO data VALUES(1,1,'EPUB',123,'Book - Author');
-		INSERT INTO data VALUES(2,2,'PDF',123,'Metadata only');`)
+		INSERT INTO data VALUES(2,1,'PDF',123,'Book - Author');
+		INSERT INTO books VALUES(2,'Metadata only','2024-01-02 03:04:05+00:00',NULL,NULL,NULL,1,'Author/Other (2)',0,'2024-01-03 00:00:00+00:00');
+		ALTER TABLE books ADD COLUMN uuid TEXT;
+		UPDATE books SET uuid='calibre-book-1' WHERE id=1;
+		UPDATE books SET uuid='calibre-book-2' WHERE id=2;
+		CREATE TABLE library_id(id INTEGER PRIMARY KEY, uuid TEXT);
+		INSERT INTO library_id VALUES(1,'calibre-library-1');
+		CREATE TABLE custom_columns(id INTEGER PRIMARY KEY, label TEXT, name TEXT, datatype TEXT);
+		CREATE TABLE custom_column_1(book INTEGER, value TEXT);
+		INSERT INTO custom_columns VALUES(1,'Shelf note','shelf_note','text');
+		INSERT INTO custom_column_1 VALUES(1,'keep this custom value');
+		CREATE TABLE last_read_positions(book INTEGER, format TEXT, user TEXT, device TEXT, cfi TEXT, epoch REAL, pos_frac REAL);
+		INSERT INTO last_read_positions VALUES(1,'EPUB','viewer','device-1','epubcfi(/6/2)',1700000000,0.25);
+		CREATE TABLE annotations(book INTEGER, format TEXT, user_type TEXT, user TEXT, timestamp REAL, annot_id TEXT, annot_type TEXT, annot_data TEXT, searchable_text TEXT);
+		INSERT INTO annotations VALUES(1,'EPUB','local','user-1',1700000001,'annotation-1','highlight','{\"cfi\":\"epubcfi(/6/4)\"}','highlight text');`)
 	closeErr := db.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +122,7 @@ func makeImportCalibreLibrary(t *testing.T) (string, string) {
 	return root, source
 }
 
-func TestImportCalibreLibraryCopiesEPUBAndSkipsMetadataOnly(t *testing.T) {
+func TestImportCalibreLibraryCopiesAllFormatsAndMetadataOnlyRecords(t *testing.T) {
 	a := testApp(t)
 	defer a.store.Close()
 	root, source := makeImportCalibreLibrary(t)
@@ -126,10 +144,10 @@ func TestImportCalibreLibraryCopiesEPUBAndSkipsMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Imported != 1 || result.Duplicates != 0 || result.Skipped != 1 || len(result.BookIDs) != 1 {
+	if result.Imported != 2 || result.Duplicates != 0 || result.Skipped != 0 || len(result.BookIDs) != 2 {
 		t.Fatalf("unexpected import result: %#v", result)
 	}
-	if lastProgress.Stage != "done" || lastProgress.Skipped != 1 || lastProgress.Total != 2 {
+	if lastProgress.Stage != "done" || lastProgress.Skipped != 0 || lastProgress.Total != 2 {
 		t.Fatalf("unexpected final progress: %#v", lastProgress)
 	}
 	after, err := os.ReadFile(source)
@@ -144,12 +162,72 @@ func TestImportCalibreLibraryCopiesEPUBAndSkipsMetadataOnly(t *testing.T) {
 	if err != nil || book.Title != "Calibre metadata title" {
 		t.Fatalf("imported book metadata missing: %#v, %v", book, err)
 	}
+	if _, pdfPath, err := a.store.BookFileSourceByFormat(result.BookIDs[0], "PDF"); err != nil {
+		t.Fatalf("Calibre PDF file missing: %v", err)
+	} else if data, readErr := os.ReadFile(pdfPath); readErr != nil || string(data) != "PDF fixture" {
+		t.Fatalf("Calibre PDF was not copied: data=%q err=%v", data, readErr)
+	}
+	var sourceMetadata, customMetadata, readingState string
+	attuneDB, err := sql.Open("sqlite3", filepath.Join(a.root, "library.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attuneDB.Close()
+	if err = attuneDB.QueryRow(`SELECT source_metadata_json,custom_metadata_json,reading_state_json FROM books WHERE id=?`, result.BookIDs[0]).Scan(&sourceMetadata, &customMetadata, &readingState); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sourceMetadata, "calibre-book-1") || !strings.Contains(customMetadata, "keep this custom value") || !strings.Contains(readingState, "epubcfi(/6/4)") {
+		t.Fatalf("Calibre source payloads were not preserved: raw=%s custom=%s state=%s", sourceMetadata, customMetadata, readingState)
+	}
+	additional := filepath.Join(t.TempDir(), "alternate.txt")
+	if err = os.WriteFile(additional, []byte("alternate format"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attached, err := a.attachBookFiles(result.BookIDs[0], []string{additional})
+	if err != nil || attached.Imported != 1 || len(attached.Errors) != 0 {
+		t.Fatalf("attach additional format = %#v, %v", attached, err)
+	}
+	if _, attachedPath, err := a.store.BookFileSourceByFormat(result.BookIDs[0], "TXT"); err != nil {
+		t.Fatalf("attached TXT asset missing: %v", err)
+	} else if data, readErr := os.ReadFile(attachedPath); readErr != nil || string(data) != "alternate format" {
+		t.Fatalf("attached TXT asset content=%q err=%v", data, readErr)
+	}
+	pdfSource := filepath.Join(root, "Author", "Book (1)", "Book - Author.pdf")
+	if err = os.WriteFile(pdfSource, []byte("changed PDF fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	result, err = a.importCalibreLibrary(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Imported != 0 || result.Duplicates != 1 || result.Skipped != 1 {
-		t.Fatalf("reimport should report duplicate and skipped record: %#v", result)
+	if result.Imported != 0 || result.Duplicates != 2 || result.Skipped != 0 {
+		t.Fatalf("reimport should report two linked records: %#v", result)
+	}
+	files, err := a.store.BookFiles(result.BookIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfFiles, preferredPDF := 0, 0
+	for _, file := range files {
+		if file.Format == "pdf" {
+			pdfFiles++
+			if file.Preferred {
+				preferredPDF++
+			}
+		}
+	}
+	if pdfFiles != 2 || preferredPDF != 1 {
+		t.Fatalf("changed Calibre file should be kept as a non-preferred variant: %#v", files)
+	}
+	if err = os.Remove(pdfSource); err != nil {
+		t.Fatal(err)
+	}
+	result, err = a.importCalibreLibrary(root)
+	if err != nil || result.Imported != 0 || result.Duplicates != 2 || len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "pdf") {
+		t.Fatalf("missing file should be reported without dropping other assets: %#v err=%v", result, err)
+	}
+	if _, _, err = a.store.BookFileSourceByFormat(result.BookIDs[0], "EPUB"); err != nil {
+		t.Fatalf("available EPUB was lost after missing-PDF reimport: %v", err)
 	}
 }
 
@@ -220,6 +298,98 @@ func TestCoverHandlerWritesCompleteLargeImageOnce(t *testing.T) {
 	}
 	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(encoded.Len()) {
 		t.Fatalf("Content-Length=%q, want %d", got, encoded.Len())
+	}
+}
+
+func TestComicArchiveManifestAndLazyPageRoute(t *testing.T) {
+	a := testApp(t)
+	defer a.store.Close()
+	comic := filepath.Join(t.TempDir(), "sample.cbz")
+	file, err := os.Create(comic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(file)
+	for _, name := range []string{"page10.png", "page2.png", "page1.png", "notes.txt"} {
+		entry, createErr := archive.Create(name)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, err = entry.Write([]byte("image:" + name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.ImportPaths([]string{comic})
+	if err != nil || result.Imported != 1 {
+		t.Fatalf("import = %#v, %v", result, err)
+	}
+	book, err := a.store.GetBook(result.BookIDs[0])
+	if err != nil || len(book.Files) != 1 {
+		t.Fatalf("book = %#v, %v", book, err)
+	}
+	fileID := book.Files[0].ID
+	manifestRequest := httptest.NewRequest(http.MethodGet, "/book-archives/"+book.ID+"/"+fileID+"/manifest", nil)
+	manifestResponse := httptest.NewRecorder()
+	a.ServeBookArchive(manifestResponse, manifestRequest)
+	if manifestResponse.Code != http.StatusOK || !strings.Contains(manifestResponse.Header().Get("Content-Security-Policy"), "script-src 'none'") {
+		t.Fatalf("manifest response = %d, %v", manifestResponse.Code, manifestResponse.Header())
+	}
+	var manifest comicManifest
+	if err = json.Unmarshal(manifestResponse.Body.Bytes(), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Pages) != 3 || !strings.HasSuffix(manifest.Pages[0].Filename, "page1.png") || !strings.HasSuffix(manifest.Pages[1].Filename, "page2.png") || !strings.HasSuffix(manifest.Pages[2].Filename, "page10.png") {
+		t.Fatalf("comic page order = %#v", manifest.Pages)
+	}
+	pageResponse := httptest.NewRecorder()
+	a.ServeBookArchive(pageResponse, httptest.NewRequest(http.MethodGet, manifest.Pages[1].URL, nil))
+	if pageResponse.Code != http.StatusOK || pageResponse.Header().Get("Content-Type") != "image/png" || pageResponse.Body.String() != "image:page2.png" {
+		t.Fatalf("page response = %d %q (%v)", pageResponse.Code, pageResponse.Body.String(), pageResponse.Header())
+	}
+	missing := httptest.NewRecorder()
+	a.ServeBookArchive(missing, httptest.NewRequest(http.MethodGet, "/book-archives/"+book.ID+"/"+fileID+"/pages/3", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing page status = %d", missing.Code)
+	}
+}
+
+func TestServeBookFileStreamsManagedAssetAndRejectsUnsafePath(t *testing.T) {
+	a := testApp(t)
+	source := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(source, []byte("reader content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	book, duplicate, err := a.store.ImportFileInBatch(source, "test-batch")
+	if err != nil || duplicate || len(book.Files) != 1 {
+		t.Fatalf("import file = %#v, %v, %v", book, duplicate, err)
+	}
+	file := book.Files[0]
+	request := httptest.NewRequest(http.MethodGet, "/book-files/"+url.PathEscape(book.ID)+"/"+url.PathEscape(file.ID), nil)
+	response := httptest.NewRecorder()
+	a.ServeBookFile(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "reader content" {
+		t.Fatalf("book file response %d: %q", response.Code, response.Body.String())
+	}
+	if response.Header().Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(response.Header().Get("Content-Security-Policy"), "script-src 'none'") {
+		t.Fatalf("missing book-file protections: %#v", response.Header())
+	}
+	rangeRequest := httptest.NewRequest(http.MethodGet, "/book-files/"+book.ID+"/"+file.ID, nil)
+	rangeRequest.Header.Set("Range", "bytes=2-5")
+	rangeResponse := httptest.NewRecorder()
+	a.ServeBookFile(rangeResponse, rangeRequest)
+	if rangeResponse.Code != http.StatusPartialContent || rangeResponse.Body.String() != "ader" {
+		t.Fatalf("range response %d: %q", rangeResponse.Code, rangeResponse.Body.String())
+	}
+	unsafe := httptest.NewRecorder()
+	a.ServeBookFile(unsafe, httptest.NewRequest(http.MethodGet, "/book-files/"+book.ID+"/%2e%2e", nil))
+	if unsafe.Code != http.StatusNotFound {
+		t.Fatalf("unsafe asset path returned %d", unsafe.Code)
 	}
 }
 
@@ -832,6 +1002,45 @@ func TestGetStateSurvivesDeviceDiscoveryFailure(t *testing.T) {
 		t.Fatalf("unexpected degraded state: %#v", state)
 	}
 	_ = a.store.Close()
+}
+
+func TestDevicePreferencesPersistAndRequireUnknownProfileSelection(t *testing.T) {
+	a := testApp(t)
+	manager := a.manager.(*fakeManager)
+	manager.device.ProfileID = "generic"
+	manager.device.BookFolders = []string{"Books", "Documents"}
+	manager.device.TransferFormats = nil
+	manager.device.RequiresExplicitSelection = true
+
+	state, err := a.GetState()
+	if err != nil || len(state.Devices) != 1 || !state.Devices[0].RequiresExplicitSelection {
+		t.Fatalf("unconfigured generic device state = %#v, %v", state.Devices, err)
+	}
+	if err = a.SendBooks(manager.device.ID, []string{"not-a-book"}); err == nil || !strings.Contains(err.Error(), "choose a book folder") {
+		t.Fatalf("unconfigured generic device send error = %v", err)
+	}
+	if err = a.SaveDevicePreferences(manager.device.ID, []string{"Books/To Read"}, []string{"epub", "pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err := a.GetDevicePreferences(manager.device.ID)
+	if err != nil || !prefs.Customized || strings.Join(prefs.Folders, ",") != "Books/To Read" || strings.Join(prefs.Formats, ",") != "epub,pdf" {
+		t.Fatalf("saved preferences = %#v, %v", prefs, err)
+	}
+	state, err = a.GetState()
+	if err != nil || len(state.Devices) != 1 {
+		t.Fatalf("configured generic device state = %#v, %v", state.Devices, err)
+	}
+	configured := state.Devices[0]
+	if configured.RequiresExplicitSelection || strings.Join(configured.BookFolders, ",") != "Books/To Read" || strings.Join(configured.TransferFormats, ",") != "epub,pdf" {
+		t.Fatalf("custom preferences were not applied: %#v", configured)
+	}
+	if err = a.ResetDevicePreferences(manager.device.ID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = a.GetState()
+	if err != nil || len(state.Devices) != 1 || !state.Devices[0].RequiresExplicitSelection {
+		t.Fatalf("reset generic device state = %#v, %v", state.Devices, err)
+	}
 }
 
 func TestGetStateDoesNotTrustDifferentDeviceAtRememberedMount(t *testing.T) {

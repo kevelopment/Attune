@@ -19,13 +19,26 @@ fi
 if [ ! -x "$GOBIN/wails" ]; then
   go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 fi
+BUILD_TAGS=$TAG
+if [ "$goos" = darwin ]; then
+  MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$goarch}
+  scripts/build-macos-mtp.sh "$goarch"
+  export PKG_CONFIG_PATH="$MTP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  BUILD_TAGS=${BUILD_TAGS:+$BUILD_TAGS,}libmtp
+elif [ "$goos" = linux ]; then
+  if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists libmtp; then
+    echo "Linux release builds require libmtp development files (for example, libmtp-dev and pkg-config)." >&2
+    exit 1
+  fi
+  BUILD_TAGS=${BUILD_TAGS:+$BUILD_TAGS,}libmtp
+fi
 backup=$(mktemp)
 cp wails.json "$backup"
 restore_config() { cp "$backup" wails.json; rm -f "$backup"; }
 trap restore_config EXIT HUP INT TERM
 node -e 'const fs=require("fs"); const p="wails.json"; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.info.productVersion=process.argv[1]; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n")' "$PRODUCT_VERSION"
-if [ -n "$TAG" ]; then
-  wails build -clean -platform "$goos/$goarch" -tags "$TAG" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
+if [ -n "$BUILD_TAGS" ]; then
+  wails build -clean -platform "$goos/$goarch" -tags "$BUILD_TAGS" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
 else
   wails build -clean -platform "$goos/$goarch" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
 fi
@@ -45,6 +58,9 @@ if [ "$goos" = darwin ]; then
   cp THIRD_PARTY_LICENSES.txt "$app/Contents/Resources/licenses/"
   cp third_party/kindling/THIRD_PARTY_LICENSES.txt "$app/Contents/Resources/licenses/Kindling-THIRD_PARTY_LICENSES.txt"
   cp third_party/kindling/LICENSE "$app/Contents/Resources/licenses/Kindling-LICENSE.txt"
+  scripts/bundle-macos-mtp.sh "$app" "$MTP_PREFIX"
+  cp "$MTP_PREFIX"/share/licenses/libmtp/* "$stage/licenses/"
+  cp "$MTP_PREFIX"/share/licenses/libusb/* "$stage/licenses/"
   /usr/libexec/PlistBuddy -c 'Set :LSMinimumSystemVersion 13.0' "$app/Contents/Info.plist"
   codesign --force --sign - "$app/Contents/Resources/kindling-cli"
   codesign --force --deep --sign - "$app"
@@ -58,8 +74,8 @@ elif [ "$goos" = linux ]; then
   cat > "$stage/INSTALL.txt" <<'EOF'
 Attune Linux amd64 (experimental)
 
-Run ./Attune. This build requires GTK 3 and WebKit2GTK 4.1 runtime libraries.
-USB Kindle discovery, transfer, and eject are experimental and need lsblk, udisksctl, and UDisks/polkit permissions. Hardware validation is limited; ensure the Kindle is mounted before transferring.
+Run ./Attune. This build requires GTK 3, WebKit2GTK 4.1, and libmtp runtime libraries.
+MTP access may require a udev rule granting your account permission to the reader. Close other MTP clients if a reader is busy. USB mass-storage discovery, transfer, and eject need lsblk, udisksctl, and UDisks/polkit permissions. Hardware validation is limited; ensure storage readers are mounted before transferring.
 EOF
   tar -czf "dist/Attune-linux-$goarch.tar.gz" -C build/release "Attune-$goos-$goarch"
 else
