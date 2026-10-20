@@ -10,9 +10,6 @@ $env:GOCACHE = if ($env:GOCACHE) { $env:GOCACHE } else { Join-Path $root ".cache
 $env:GOBIN = if ($env:GOBIN) { $env:GOBIN } else { Join-Path $env:GOPATH "bin" }
 $env:PATH = "$env:GOBIN;$env:PATH"
 $env:CGO_ENABLED = "1"
-$wpdBuild = Join-Path $PSScriptRoot "build-wpd-helper.ps1"
-& $wpdBuild
-if ($LASTEXITCODE -ne 0) { throw "WPD helper build failed with exit code $LASTEXITCODE" }
 $helper = Join-Path $root "third_party/kindling/windows-amd64/kindling-cli.exe"
 if (!(Test-Path $helper)) { throw "Missing pinned helper: $helper" }
 if (!(Test-Path (Join-Path $env:GOBIN "wails.exe"))) {
@@ -27,6 +24,10 @@ try {
   $config | ConvertTo-Json -Depth 32 | Set-Content -Encoding utf8 $configPath
   & (Join-Path $env:GOBIN "wails.exe") build -clean -platform windows/amd64 -ldflags "-X attune/internal/app.appVersion=$Version -X attune/internal/app.updateEnabled=true"
   if ($LASTEXITCODE -ne 0) { throw "Wails build failed with exit code $LASTEXITCODE" }
+  # Wails' clean build removes build/bin, so create the helper after it.
+  $wpdBuild = Join-Path $PSScriptRoot "build-wpd-helper.ps1"
+  & $wpdBuild
+  if ($LASTEXITCODE -ne 0) { throw "WPD helper build failed with exit code $LASTEXITCODE" }
   $stage = Join-Path $root "build/release/Attune-windows-amd64"
   $dist = Join-Path $root "dist"
   New-Item -ItemType Directory -Force -Path "$stage/licenses", $dist | Out-Null

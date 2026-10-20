@@ -15,15 +15,28 @@ jobs:
         include:
           - target: macos-arm64
             runner: macos-15
+            goos: darwin
+            goarch: arm64
           - target: macos-amd64
             runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
           - target: linux-amd64
             runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
           - target: windows-amd64
             runner: windows-2025
+            goos: windows
+            goarch: amd64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: startsWith(matrix.goos, 'darwin')
+        with:
+          python-version: '3.12'
 
       - name: Install Linux desktop dependencies
         if: matrix.runner == 'ubuntu-24.04'
@@ -54,10 +67,20 @@ jobs:
           if (!(Test-Path (Join-Path $mingw 'gcc.exe'))) { throw "MinGW GCC was not found at $mingw" }
           Add-Content $env:GITHUB_PATH $mingw
 
-      - name: Compile Windows Portable Devices helper
+      - name: Fetch pinned Kindling helper (Unix)
+        if: matrix.runner != 'windows-2025'
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: scripts/fetch-kindling.sh "$TARGET_GOOS" "$TARGET_GOARCH"
+
+      - name: Fetch pinned Kindling helper (Windows)
         if: matrix.runner == 'windows-2025'
         shell: pwsh
-        run: ./scripts/build-wpd-helper.ps1
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: ./scripts/fetch-kindling.ps1 $env:TARGET_GOOS $env:TARGET_GOARCH
 
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
@@ -109,6 +132,23 @@ jobs:
             export PKG_CONFIG_PATH="$PWD/.cache/macos-mtp/$mtp_arch/lib/pkgconfig"
           fi
           go test -run '^$' -tags libmtp ./internal/device
+
+      - name: Build release package (macOS/Linux)
+        if: matrix.goos != 'windows'
+        run: |
+          version=$(node -p 'require("./frontend/package.json").version')
+          if [ "$RUNNER_OS" = Linux ]; then
+            scripts/build-release.sh "$version" webkit2_41
+          else
+            scripts/build-release.sh "$version"
+          fi
+
+      - name: Build release package (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content 'frontend/package.json' -Raw | ConvertFrom-Json).version
+          ./scripts/build-release.ps1 -Version $version
 
   test:
     name: test
