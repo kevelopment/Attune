@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <portabledeviceapi.h>
 #include <portabledevice.h>
@@ -133,7 +134,7 @@ class Request {
     uint64_t result = 0;
     while (p < input_.size() && input_[p] >= '0' && input_[p] <= '9') {
       unsigned digit = static_cast<unsigned>(input_[p++] - '0');
-      if (result > (std::numeric_limits<uint64_t>::max() - digit) / 10) return false;
+      if (result > ((std::numeric_limits<uint64_t>::max)() - digit) / 10) return false;
       result = result * 10 + digit;
     }
     *value = result;
@@ -170,7 +171,7 @@ std::string hresult_message(const char* operation, HRESULT hr) {
                      FORMAT_MESSAGE_IGNORE_INSERTS,
                  nullptr, static_cast<DWORD>(hr), 0,
                  reinterpret_cast<LPWSTR>(&text), 0, nullptr);
-  std::wstring message = operation;
+  std::wstring message = utf8_to_wide(operation);
   if (text) { message += L": "; message += text; LocalFree(text); }
   else { wchar_t code[24]; swprintf_s(code, L" (0x%08X)", static_cast<unsigned>(hr)); message += code; }
   return wide_to_utf8(message);
@@ -266,7 +267,7 @@ class WPDHelper {
     ComPtr<IPortableDeviceValues> client;
     hr = CoCreateInstance(CLSID_PortableDeviceValues, nullptr, CLSCTX_INPROC_SERVER,
                           IID_PPV_ARGS(&client));
-    if (SUCCEEDED(hr)) hr = client->SetUnsignedIntegerValue(CLIENT_DESIRED_ACCESS, GENERIC_READ | GENERIC_WRITE);
+    if (SUCCEEDED(hr)) hr = client->SetUnsignedIntegerValue(WPD_CLIENT_DESIRED_ACCESS, GENERIC_READ | GENERIC_WRITE);
     std::wstring device_id = utf8_to_wide(id);
     if (SUCCEEDED(hr)) hr = candidate->Open(device_id.c_str(), client.Get());
     if (FAILED(hr)) { reply_error(hresult_message("open WPD device", hr)); return true; }
@@ -400,12 +401,22 @@ class WPDHelper {
 
   bool valid_object(IPortableDeviceContent* content, const std::wstring& storage, const std::wstring& object) {
     if (!storage_exists(content, storage)) return false;
+    if (object.empty() || object == storage || object == WPD_DEVICE_OBJECT_ID) return false;
     ComPtr<IPortableDeviceProperties> properties;
     if (FAILED(content->Properties(&properties))) return false;
-    ComPtr<IPortableDeviceValues> values;
-    if (FAILED(properties->GetValues(object.c_str(), nullptr, &values))) return false;
-    std::wstring object_storage;
-    return get_string(values.Get(), WPD_OBJECT_STORAGE_ID, &object_storage) && object_storage == storage;
+    std::vector<std::wstring> visited;
+    std::wstring current = object;
+    while (!current.empty() && current != WPD_DEVICE_OBJECT_ID && visited.size() < 256) {
+      if (current == storage) return true;
+      if (std::find(visited.begin(), visited.end(), current) != visited.end()) return false;
+      visited.push_back(current);
+      ComPtr<IPortableDeviceValues> values;
+      if (FAILED(properties->GetValues(current.c_str(), nullptr, &values))) return false;
+      std::wstring parent;
+      if (!get_string(values.Get(), WPD_OBJECT_PARENT_ID, &parent) || parent == current) return false;
+      current = std::move(parent);
+    }
+    return false;
   }
 
   bool valid_folder(IPortableDeviceContent* content, const std::wstring& storage, const std::wstring& object) {

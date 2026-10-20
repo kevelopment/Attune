@@ -4,6 +4,7 @@ APP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$APP_ROOT/scripts/macos-mtp-pins.sh"
 ARCH=${1:-$(uname -m)}
 case "$ARCH" in
+  amd64) ARCH=x86_64 ;;
   arm64|x86_64) ;;
   *) echo "unsupported macOS MTP architecture: $ARCH" >&2; exit 2 ;;
 esac
