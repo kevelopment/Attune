@@ -21,8 +21,10 @@ if [ ! -x "$GOBIN/wails" ]; then
 fi
 BUILD_TAGS=$TAG
 if [ "$goos" = darwin ]; then
-  MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$goarch}
-  scripts/build-macos-mtp.sh "$goarch"
+  mtp_arch=$goarch
+  [ "$mtp_arch" != amd64 ] || mtp_arch=x86_64
+  MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$mtp_arch}
+  scripts/build-macos-mtp.sh "$mtp_arch"
   export PKG_CONFIG_PATH="$MTP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
   BUILD_TAGS=${BUILD_TAGS:+$BUILD_TAGS,}libmtp
 elif [ "$goos" = linux ]; then

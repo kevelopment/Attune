@@ -103,8 +103,10 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
-            scripts/build-macos-mtp.sh "$(go env GOARCH)"
-            export PKG_CONFIG_PATH="$PWD/.cache/macos-mtp/$(go env GOARCH)/lib/pkgconfig"
+            mtp_arch="$(go env GOARCH)"
+            [ "$mtp_arch" != amd64 ] || mtp_arch=x86_64
+            scripts/build-macos-mtp.sh "$mtp_arch"
+            export PKG_CONFIG_PATH="$PWD/.cache/macos-mtp/$mtp_arch/lib/pkgconfig"
           fi
           go test -run '^$' -tags libmtp ./internal/device
 

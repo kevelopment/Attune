@@ -18,8 +18,10 @@ fi
 if [ ! -x "$GOBIN/wails" ]; then
   go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 fi
-MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$ARCH}
-scripts/build-macos-mtp.sh "$ARCH"
+MTP_ARCH=$ARCH
+[ "$MTP_ARCH" != amd64 ] || MTP_ARCH=x86_64
+MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$MTP_ARCH}
+scripts/build-macos-mtp.sh "$MTP_ARCH"
 export PKG_CONFIG_PATH="$MTP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 wails build -clean -tags libmtp -ldflags "-X attune/internal/app.appVersion=$ATTUNE_VERSION -X attune/internal/app.updateEnabled=true"
 APP="build/bin/Attune.app"

@@ -972,7 +972,7 @@ func TestQueueRecordsMatchingUntrackedDeviceFile(t *testing.T) {
 	if manager.started.Load() != 0 {
 		t.Fatal("matching device file was redundantly sent")
 	}
-	if got, err := a.store.TransferKey(manager.device.ID, filepath.Join("documents", filename)); err != nil || got != key {
+	if got, err := a.store.TransferKey(manager.device.ID, filepath.ToSlash(filepath.Join("documents", filename))); err != nil || got != key {
 		t.Fatalf("recovered transfer tracking = %q, %v", got, err)
 	}
 }
