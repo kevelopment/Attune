@@ -2,6 +2,7 @@ package calibre
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -70,6 +71,22 @@ func makeLibrary(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = db.Exec(`
+		ALTER TABLE books ADD COLUMN uuid TEXT;
+		UPDATE books SET uuid='book-uuid-1' WHERE id=1;
+		CREATE TABLE library_id(id INTEGER PRIMARY KEY, uuid TEXT);
+		INSERT INTO library_id VALUES(1,'library-uuid');
+		CREATE TABLE custom_columns(id INTEGER PRIMARY KEY, label TEXT, name TEXT, datatype TEXT);
+		INSERT INTO custom_columns VALUES(1,'Shelf note','shelf_note','text');
+		CREATE TABLE last_read_positions(book INTEGER, format TEXT, user TEXT, device TEXT, cfi TEXT, epoch REAL, pos_frac REAL);
+		INSERT INTO last_read_positions VALUES(1,'EPUB','viewer','device-1','epubcfi(/6/2)',1700000000,0.25);
+		CREATE TABLE annotations(book INTEGER, format TEXT, user_type TEXT, user TEXT, timestamp REAL, annot_id TEXT, annot_type TEXT, annot_data TEXT, searchable_text TEXT);
+		INSERT INTO annotations VALUES(1,'EPUB','local','user-1',1700000001,'annotation-1','highlight','{"cfi":"epubcfi(/6/4)"}','highlight text');
+		INSERT INTO annotations VALUES(1,'EPUB','local','user-1',1700000002,'annotation-2','bookmark','{"cfi":"epubcfi(/6/6)"}','');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "Author", "Book (1)", "Title - Author.epub"), []byte("epub source"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +137,27 @@ func TestReadLibraryMetadataAndFormats(t *testing.T) {
 	if !reflect.DeepEqual(first.Formats, []string{"EPUB", "PDF"}) || first.EPUBPath != filepath.Join(canonicalRoot, "Author", "Book (1)", "Title - Author.epub") {
 		t.Fatalf("EPUB/format lookup failed: %#v", first)
 	}
+	if len(first.Assets) != 2 || first.Assets[0].Format != "EPUB" || first.Assets[0].Path != first.EPUBPath || first.Assets[0].Name != "Title - Author.epub" || first.Assets[0].Size != 123 {
+		t.Fatalf("per-format assets were not exposed: %#v", first.Assets)
+	}
+	if first.Assets[1].Format != "PDF" || first.Assets[1].Path != "" || first.Assets[1].Issue == "" || first.EPUBPath == "" {
+		t.Fatalf("missing PDF should be isolated from the available EPUB: %#v", first.Assets)
+	}
+	if first.LibraryUUID != "library-uuid" || first.UUID != "book-uuid-1" {
+		t.Fatalf("library/book UUIDs missing: library=%q book=%q", first.LibraryUUID, first.UUID)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(first.RawMetadata, &raw); err != nil || raw["uuid"] != "book-uuid-1" {
+		t.Fatalf("raw metadata not retained as JSON: value=%s err=%v", first.RawMetadata, err)
+	}
+	var custom []map[string]any
+	if err := json.Unmarshal(first.CustomValues, &custom); err != nil || len(custom) != 1 {
+		t.Fatalf("custom column values missing: value=%s err=%v", first.CustomValues, err)
+	}
+	var state map[string][]map[string]any
+	if err := json.Unmarshal(first.ReadingState, &state); err != nil || len(state["last_read_positions"]) != 1 || len(state["annotations"]) != 2 {
+		t.Fatalf("Calibre reading state not retained: value=%s err=%v", first.ReadingState, err)
+	}
 	if first.CoverPath != filepath.Join(canonicalRoot, "Author", "Book (1)", "cover.jpg") {
 		t.Fatalf("cover lookup failed: %q", first.CoverPath)
 	}
@@ -162,6 +200,27 @@ func TestReadLibraryDoesNotModifyCalibreDatabase(t *testing.T) {
 	var custom string
 	if err := db.QueryRow(`SELECT value FROM custom_column_1 WHERE book=1`).Scan(&custom); err != nil || custom != "keep me" {
 		t.Fatalf("custom Calibre data changed: value=%q err=%v", custom, err)
+	}
+}
+
+func TestReadLibraryWithoutOptionalTables(t *testing.T) {
+	root := makeLibrary(t)
+	db, err := sql.Open("sqlite3", filepath.Join(root, "metadata.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"library_id", "custom_columns", "last_read_positions", "annotations"} {
+		if _, err := db.Exec(`DROP TABLE "` + table + `"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+	books, err := ReadLibrary(root)
+	if err != nil {
+		t.Fatalf("optional Calibre tables should not be required: %v", err)
+	}
+	if books[0].LibraryUUID != "" || len(books[0].CustomValues) != 0 || len(books[0].ReadingState) != 0 {
+		t.Fatalf("absent optional data should remain empty: %#v", books[0])
 	}
 }
 

@@ -116,7 +116,11 @@ jobs:
         if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libmtp-dev
+
+      - name: Install macOS MTP build dependencies
+        if: startsWith(matrix.goos, 'darwin')
+        run: brew install pkgconf
 
       - name: Install Windows C compiler
         if: matrix.goos == 'windows'
@@ -217,9 +221,9 @@ jobs:
           Attune release packages
 
           macOS: open the DMG and drag Attune.app onto the Applications shortcut. The ZIP package is used for in-app updates. Downloads are ad-hoc signed and not Apple-notarized; follow Apple's Open Anyway instructions at https://support.apple.com/en-us/102445 if Gatekeeper blocks first launch.
-          Linux amd64: experimental; GTK 3 and WebKit2GTK 4.1 runtime libraries are required. USB management needs lsblk, udisksctl, and working UDisks/polkit permissions.
-          Windows amd64: experimental; Microsoft Edge WebView2 Runtime and PowerShell Storage CIM cmdlets are required. USB management requires a USB/removable volume with a drive letter and stable IDs.
-          Experimental Kindle USB discovery, transfer, and eject are implemented on macOS, Linux, and Windows; physical-device support still needs validation on each platform.
+          Linux amd64: experimental; GTK 3, WebKit2GTK 4.1, and libmtp runtime libraries are required. MTP access may need a udev rule. USB mass-storage management needs lsblk, udisksctl, and working UDisks/polkit permissions.
+          Windows amd64: experimental; Microsoft Edge WebView2 Runtime and PowerShell Storage CIM cmdlets are required. USB management requires a USB/removable volume with a drive letter and stable IDs. MTP uses Windows Portable Devices through the packaged helper.
+          macOS packages bundle pinned libmtp/libusb runtimes. MTP support is experimental; report the model, firmware, OS, transport, and tested operation so compatibility can be verified.
           Verify downloads with SHA256SUMS.txt.
           EOF
       - name: Publish release

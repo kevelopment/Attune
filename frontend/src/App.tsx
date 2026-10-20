@@ -8,7 +8,8 @@ import {
   Bookmark, BookmarkPlus, Columns2, AlignLeft, Trash,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
-import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, Progress, ImportProgress, ImportResult } from './types'
+import type { ReaderAnnotation } from './bridge'
+import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, DevicePreferences, Progress, ImportProgress, ImportResult } from './types'
 import { useTextSize, useBookSize, type TextSize } from './appearance'
 import BookSizeControl from './GallerySize'
 import ActivityCenter, { useActivityLog } from './ActivityCenter'
@@ -20,6 +21,8 @@ import DropdownSelect from './DropdownSelect'
 import Welcome from './Welcome'
 import type { CalibreLocation } from './Welcome'
 import { createReaderPagination, type ReaderPagination } from './readerPagination'
+import { ReaderSurface, type ReaderSurfaceHandle } from './readers/ReaderSurface'
+import type { ReaderSection, ReaderSettings } from './readers/adapter'
 
 type Page = 'library' | 'recent' | 'device' | 'updates' | 'settings'
 type Sort = 'recent' | 'title' | 'author'
@@ -28,6 +31,8 @@ type EditDraft = { title: string; authors: string; publisher: string; language: 
 type MenuAnchor = { key: string; left: number; top: number }
 type IntakeRequest = { paths: string[]; names: string[]; device: { id: string; name: string } | null }
 type PasteMenu = { left: number; top: number } | null
+type DevicePreferencesDraft = DevicePreferences & { deviceID: string; deviceName: string; foldersText: string; requiresExplicitSelection: boolean }
+const deviceFormatOptions = ['epub', 'pdf', 'azw3', 'mobi', 'prc', 'azw', 'fb2', 'txt', 'cbz', 'cbr', 'rtf', 'doc', 'docx', 'odt', 'html', 'htmlz', 'pdb', 'lit', 'zip']
 const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1_000).toFixed(0)} KB` : n < 1_000_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${(n / 1_000_000_000).toFixed(1)} GB`
 function bookCover(book: Book) {
   const url = bridge.previewCover(book.coverURL || `/covers/${book.id}`)
@@ -75,6 +80,9 @@ export default function App() {
   const [deviceBooksLoading, setDeviceBooksLoading] = useState(false)
   const [deviceBooksError, setDeviceBooksError] = useState('')
   const [deviceSelection, setDeviceSelection] = useState<string[]>([])
+  const [activeDeviceID, setActiveDeviceID] = useState(() => localStorage.getItem('attune-active-device') ?? '')
+  const [devicePreferencesDraft, setDevicePreferencesDraft] = useState<DevicePreferencesDraft | null>(null)
+  const [importReport, setImportReport] = useState<ImportResult | null>(null)
   const [ejectingDevice, setEjectingDevice] = useState<Device | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [previewTarget, setPreviewTarget] = useState<Book | null>(null)
@@ -180,7 +188,7 @@ export default function App() {
         updateActivity(id, { status, current: next.stage === 'done' ? next.current : Math.max(0, next.current - 1), total: next.total, detail: [next.title, next.message || stageName(next.stage)].filter(Boolean).join(' · ') })
         if (terminal) {
           transferGuard.current = false
-          if (next.stage === 'done' && next.total > 0 && next.current >= next.total) notify({ text: `${next.title || 'Books'} sent to Kindle`, kind: 'success' })
+          if (next.stage === 'done' && next.total > 0 && next.current >= next.total) notify({ text: `${next.title || 'Books'} sent to device`, kind: 'success' })
           else if (next.stage === 'error' || next.stage === 'cancelled') updateActivity(id, { detail: next.message || stageName(next.stage) })
         }
       } else if (next.stage === 'error' || next.stage === 'cancelled' || (next.stage === 'done' && next.total > 0 && next.current >= next.total)) transferGuard.current = false
@@ -261,7 +269,11 @@ export default function App() {
     }
     return [...groups.values()].map(group => ({ ...group, batches: group.batches.sort((a, b) => b.timestamp - a.timestamp) })).sort((a, b) => b.timestamp - a.timestamp)
   }, [state, books, page])
-  const device = state?.devices?.find(item => !hiddenEjectingDevices.current.has(item.id) && !ejectingDeviceIDs.current.has(item.id))
+  const availableDevices = (state?.devices ?? []).filter(item => !hiddenEjectingDevices.current.has(item.id) && !ejectingDeviceIDs.current.has(item.id))
+  const device = availableDevices.find(item => item.id === activeDeviceID) ?? availableDevices[0]
+  useEffect(() => {
+    if (device?.id) localStorage.setItem('attune-active-device', device.id)
+  }, [device?.id])
   const isDevice = page === 'device'
   const visibleDeviceBooks = useMemo(() => deviceBooks.filter(book => {
     const needle = query.trim().toLowerCase()
@@ -269,6 +281,8 @@ export default function App() {
     return (!needle || `${title} ${book.name} ${(book.authors ?? []).join(' ')}`.toLowerCase().includes(needle)) && matchesFilter(book.authors, authorFilter) && matchesFilter(book.subjects, genreFilter) && matchesFilter(book.language ? [book.language] : [], languageFilter)
   }).sort((a, b) => sort === 'title' ? (a.title || fileTitle(a.name)).localeCompare(b.title || fileTitle(b.name)) : sort === 'author' ? (a.authors?.[0] ?? '').localeCompare(b.authors?.[0] ?? '') : 0), [deviceBooks, query, authorFilter, genreFilter, languageFilter, sort])
   const transferActive = transferGuard.current || (!!progress && !['error', 'cancelled'].includes(progress.stage) && !(progress.stage === 'done' && (!progress.total || progress.current >= progress.total)))
+  const canSendToDevice = !!device && !device.requiresExplicitSelection && !transferActive
+  const deviceSendLabel = !device ? 'Connect a reader to send' : device.requiresExplicitSelection ? 'Set transfer settings first' : transferActive ? 'Transfer in progress' : `Send to ${device.name}`
   useEffect(() => {
     const keys = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -360,8 +374,11 @@ export default function App() {
       const skipped = result.skipped ?? 0
       const processed = imported + duplicates + skipped + errors.length
       const summary = `${imported} imported · ${duplicates} duplicates${skipped ? ` · ${skipped} skipped` : ''}`
-      updateActivity(activityID, { status: errors.length ? 'error' : 'success', current: processed, total: total || processed, detail: errors[0] || summary })
-      if (errors.length) notify({ text: `${summary} · ${errors.length} failed: ${errors[0]}`, kind: 'error' })
+      updateActivity(activityID, { status: errors.length ? 'error' : 'success', current: processed, total: total || processed, detail: errors.length ? `${summary} · ${errors.length} file issues` : summary })
+      if (errors.length) {
+        setImportReport(result)
+        notify({ text: `${summary} · ${errors.length} file issues. Review the import report for details.`, kind: 'error' })
+      }
       else notify({ text: summary, kind: 'success' })
       await refresh(true)
       return result
@@ -378,7 +395,7 @@ export default function App() {
   async function importPaths(paths: string[], target: 'library' | 'device' = 'library') {
     if (!paths.length || intake || intakeFlowGuard.current || clipboardReadInFlight.current || importGuard.current || busy || transferActive || changingLibrary) return
     const names = paths.map(path => path.split(/[\\/]/).pop() ?? path)
-    if (target === 'device') setIntake({ paths, names, device: device ? { id: device.id, name: device.name } : null })
+    if (target === 'device') setIntake({ paths, names, device: device && !device.requiresExplicitSelection ? { id: device.id, name: device.name } : null })
     else await completeIntake({ paths, names, device: null }, false)
   }
   importPathsRef.current = (paths, target) => { void importPaths(paths, target) }
@@ -390,9 +407,9 @@ export default function App() {
     clipboardReadInFlight.current = true
     try {
       const paths = await bridge.readClipboardFiles()
-      if (!paths.length) { notify({ text: 'No EPUB files were found on the clipboard.', kind: 'error' }); return }
+      if (!paths.length) { notify({ text: 'No supported book files were found on the clipboard.', kind: 'error' }); return }
       const names = paths.map(path => path.split(/[\\/]/).pop() ?? path)
-      setIntake({ paths, names, device: device ? { id: device.id, name: device.name } : null })
+      setIntake({ paths, names, device: device && !device.requiresExplicitSelection ? { id: device.id, name: device.name } : null })
     } catch (e) { notify({ text: message(e), kind: 'error' }) }
     finally { clipboardReadInFlight.current = false }
   }
@@ -402,7 +419,7 @@ export default function App() {
     const result = await performImport(() => bridge.importPaths(request.paths), request.paths.length, request.names[0] ?? 'Imported books')
     if (!sendToDevice || !result || !result.bookIDs?.length) return
     const target = request.device
-    if (!target) { notify({ text: 'No Kindle was connected when you chose to send these books.', kind: 'error' }); return }
+    if (!target) { notify({ text: 'No reader was connected when you chose to send these books.', kind: 'error' }); return }
     try {
       const fresh = await bridge.getState()
       if (!fresh.devices.some(candidate => candidate.id === target.id)) { notify({ text: `${target.name} disconnected. Your books were imported to the library but were not sent.`, kind: 'error' }); return }
@@ -440,6 +457,28 @@ export default function App() {
   async function addDevice() {
     if (ejectingDeviceIDs.current.size) return
     await run(() => bridge.selectDevice(), async () => { await refresh(); navigateTo('device') })
+  }
+  async function openDevicePreferences(target: Device) {
+    const preferences = await run(() => bridge.getDevicePreferences(target.id))
+    if (preferences) setDevicePreferencesDraft({ ...preferences, deviceID: target.id, deviceName: target.name, foldersText: preferences.folders.join('\n'), requiresExplicitSelection: !!target.requiresExplicitSelection })
+  }
+  async function saveDevicePreferences() {
+    if (!devicePreferencesDraft) return
+    const folders = devicePreferencesDraft.foldersText.split('\n').map(folder => folder.trim()).filter(Boolean)
+    await run(() => bridge.saveDevicePreferences(devicePreferencesDraft.deviceID, folders, devicePreferencesDraft.formats), async () => {
+      setDevicePreferencesDraft(null)
+      await refresh(true)
+      notify({ text: `Transfer settings saved for ${devicePreferencesDraft.deviceName}`, kind: 'success' })
+    })
+  }
+  async function resetDevicePreferences() {
+    if (!devicePreferencesDraft) return
+    await run(() => bridge.resetDevicePreferences(devicePreferencesDraft.deviceID), async () => {
+      const name = devicePreferencesDraft.deviceName
+      setDevicePreferencesDraft(null)
+      await refresh(true)
+      notify({ text: `Transfer defaults restored for ${name}`, kind: 'success' })
+    })
   }
   async function changeLibraryLocation() {
     if (libraryChangeGuard.current || intakeFlowGuard.current || busy || importGuard.current || transferActive) return
@@ -484,6 +523,13 @@ export default function App() {
       notify({ text: 'Cover updated', kind: 'success' })
     })
   }
+  async function attachBookFiles(book: Book) {
+    const result = await performImport(() => bridge.attachBookFiles(book.id), 0, `${book.title} files`)
+    if (!result) return
+    const next = await bridge.getState()
+    setState(next)
+    setFocusedBook(next.books.find(item => item.id === book.id) ?? book)
+  }
   async function openPreview(book: Book) {
     setPreviewTarget(book)
     setReaderOpen(true)
@@ -492,10 +538,19 @@ export default function App() {
     setPreviewError('')
     setPreviewLoading(true)
     try {
-      const next = await bridge.getBookPreview(book.id)
-      setBookPreview(next)
-      const saved = await bridge.getReadingProgress(book.id).catch(() => ({ bookID: book.id, chapterIndex: 0, position: 0 }))
-      setPreviewChapter(Math.max(0, Math.min(next.chapters.length - 1, saved.chapterIndex)))
+      if (bridge.preview) {
+        const next = await bridge.getBookPreview(book.id)
+        setBookPreview(next)
+        const saved = await bridge.getReadingProgress(book.id).catch(() => ({ bookID: book.id, chapterIndex: 0, position: 0 }))
+        setPreviewChapter(Math.max(0, Math.min(next.chapters.length - 1, saved.chapterIndex)))
+      } else {
+        const readable = (book.files ?? []).filter(file => file.canRead)
+        const chosen = readable.find(file => file.preferred) ?? readable[0]
+        if (!chosen) throw new Error('This book has no format that Attune can read yet. Add a supported format or open a file with another app.')
+        setBookPreview({ book, chapters: [], fileID: chosen.id })
+        const legacy = await bridge.getReadingProgress(book.id).catch(() => ({ bookID: book.id, chapterIndex: 0, position: 0 }))
+        setPreviewChapter(legacy.chapterIndex)
+      }
     }
     catch (e) { setPreviewError(message(e)) }
     finally { setPreviewLoading(false) }
@@ -510,17 +565,17 @@ export default function App() {
     await run(() => bridge.updateBookMetadata(focusedBook.id, edit), async (book: Book) => { setEditing(false); setFocusedBook(book); await refresh() })
   }
   async function deleteLocal(book: Book) {
-    setConfirmation({ title: 'Remove from library?', description: `“${book.title}” will be removed from your library. Any copy already on a Kindle will stay there.`, confirmLabel: 'Remove from library', action: () => { void run(() => bridge.deleteBook(book.id), async () => { setSelected(s => s.filter(id => id !== book.id)); setFocusedBook(null); await refresh(); notify({ text: 'Book removed from your library', kind: 'success' }) }) } })
+    setConfirmation({ title: 'Remove from library?', description: `“${book.title}” will be removed from your library. Copies already on a reader will stay there.`, confirmLabel: 'Remove from library', action: () => { void run(() => bridge.deleteBook(book.id), async () => { setSelected(s => s.filter(id => id !== book.id)); setFocusedBook(null); await refresh(); notify({ text: 'Book removed from your library', kind: 'success' }) }) } })
   }
   async function deleteSelected() {
     const targets = (state?.books ?? []).filter(b => selected.includes(b.id))
     if (!targets.length) return
-    setConfirmation({ title: `Remove ${targets.length} ${targets.length === 1 ? 'book' : 'books'} from library?`, description: 'Any copies already on a Kindle will stay there.', confirmLabel: 'Remove from library', action: () => { void run(async () => { for (const book of targets) await bridge.deleteBook(book.id) }, async () => { setSelected([]); await refresh(); notify({ text: `${targets.length} ${targets.length === 1 ? 'book' : 'books'} removed from your library`, kind: 'success' }) }) } })
+    setConfirmation({ title: `Remove ${targets.length} ${targets.length === 1 ? 'book' : 'books'} from library?`, description: 'Copies already on a reader will stay there.', confirmLabel: 'Remove from library', action: () => { void run(async () => { for (const book of targets) await bridge.deleteBook(book.id) }, async () => { setSelected([]); await refresh(); notify({ text: `${targets.length} ${targets.length === 1 ? 'book' : 'books'} removed from your library`, kind: 'success' }) }) } })
   }
   async function send(ids: string[], target: { id: string; name: string } | null = device ? { id: device.id, name: device.name } : null) {
     if (!ids.length) return
     if (intakeFlowGuard.current || transferActive) { notify({ text: 'Wait for the current operation to finish before starting another.', kind: 'status' }); return }
-    if (!target) { notify({ text: 'Connect a Kindle first, then choose it in Devices.', kind: 'error' }); return }
+    if (!target) { notify({ text: 'Connect a reader first, then choose it in Devices.', kind: 'error' }); return }
     transferGuard.current = true
     const title = ids.length === 1 ? (state?.books ?? []).find(b => b.id === ids[0])?.title ?? 'Book' : `${ids.length} books`
     transferActivityId.current = begin('transfer', `Send ${title} to ${target.name}`)
@@ -529,14 +584,14 @@ export default function App() {
     const ok = await run(() => bridge.sendBooks(target.id, ids), () => setSelected([]))
     if (ok === null) {
       transferGuard.current = false
-      if (transferActivityId.current) updateActivity(transferActivityId.current, { status: 'error', detail: 'Could not start transfer. Check the Kindle connection and try again.' })
-      setProgress(p => p ? { ...p, stage: 'error', message: 'Could not start transfer. Check the Kindle connection and try again.' } : null)
+      if (transferActivityId.current) updateActivity(transferActivityId.current, { status: 'error', detail: 'Could not start transfer. Check the device connection and try again.' })
+      setProgress(p => p ? { ...p, stage: 'error', message: 'Could not start transfer. Check the device connection and try again.' } : null)
     }
   }
   function eject() {
     if (!device) return
     const target = device
-    setConfirmation({ title: 'Eject Kindle?', description: 'Finish writing to the device and disconnect it safely.', confirmLabel: 'Eject Kindle', action: () => {
+    setConfirmation({ title: `Eject ${target.name}?`, description: 'Finish writing to the device and disconnect it safely.', confirmLabel: 'Eject device', action: () => {
       if (ejectingDeviceIDs.current.has(target.id)) return
       hiddenEjectingDevices.current.add(target.id)
       ejectingDeviceIDs.current.add(target.id)
@@ -552,7 +607,7 @@ export default function App() {
         try {
           await bridge.ejectDevice(target.id)
           updateActivity(activityID, { status: 'success', detail: 'Device disconnected safely' })
-          notify({ text: 'Kindle ejected safely', kind: 'success' })
+          notify({ text: `${target.name} ejected safely`, kind: 'success' })
           await refresh()
         } catch (e) {
           hiddenEjectingDevices.current.delete(target.id)
@@ -572,7 +627,7 @@ export default function App() {
   function confirmRemoveFromDevice(paths: string[]) {
     if (!device || !paths.length) return
     const single = paths.length === 1
-    setConfirmation({ title: `Remove ${paths.length} ${single ? 'book' : 'books'} from Kindle?`, description: 'Your library copies will stay on this computer.', confirmLabel: 'Remove from Kindle', action: () => { void run(() => bridge.removeDeviceBooks(device.id, paths), async () => { setDeviceSelection(s => s.filter(path => !paths.includes(path))); setDeviceBooks(await bridge.getDeviceBooks(device.id)); notify({ text: `${single ? 'Book' : 'Books'} removed from Kindle`, kind: 'success' }) }) } })
+    setConfirmation({ title: `Remove ${paths.length} ${single ? 'book' : 'books'} from ${device.name}?`, description: 'Your library copies will stay on this computer.', confirmLabel: 'Remove from device', action: () => { void run(() => bridge.removeDeviceBooks(device.id, paths), async () => { setDeviceSelection(s => s.filter(path => !paths.includes(path))); setDeviceBooks(await bridge.getDeviceBooks(device.id)); notify({ text: `${single ? 'Book' : 'Books'} removed from ${device.name}`, kind: 'success' }) }) } })
   }
   function removeFromDevice() { confirmRemoveFromDevice([...deviceSelection]) }
   function toggle(id: string, e?: React.MouseEvent) { setSelected(s => s.includes(id) ? s.filter(x => x !== id) : e?.shiftKey ? [...s, id] : [...s, id]) }
@@ -580,7 +635,7 @@ export default function App() {
   const hasFilters = !!(authorFilter || genreFilter || languageFilter)
   const openDeviceDetails = (book: DeviceBook) => { setFocusedBook(null); setFocusedDeviceBook(book) }
   const renderBook = (book: Book, itemLayout: 'grid' | 'list') => (
-    <BookTile key={book.id} book={book} layout={itemLayout} selected={selected.includes(book.id)} menu={activeMenu?.key === `book:${book.id}` ? activeMenu : null} onMenu={button => toggleMenu(`book:${book.id}`, button)} onMenuClose={() => setActiveMenu(null)} canSend={!!device && !transferActive} sendLabel={device ? `Send to ${device.name}` : 'Connect a Kindle to send'} onPreview={() => { setActiveMenu(null); void openPreview(book) }} onEdit={() => { setActiveMenu(null); void startEdit(book) }} onSend={() => { setActiveMenu(null); void send([book.id]) }} onDelete={() => { setActiveMenu(null); void deleteLocal(book) }} onToggle={e => toggle(book.id, e)} onOpen={() => { setFocusedDeviceBook(null); setFocusedBook(book); setEditing(false) }}/>
+    <BookTile key={book.id} book={book} layout={itemLayout} selected={selected.includes(book.id)} menu={activeMenu?.key === `book:${book.id}` ? activeMenu : null} onMenu={button => toggleMenu(`book:${book.id}`, button)} onMenuClose={() => setActiveMenu(null)} canRead={!!book.files?.some(file => file.canRead)} canSend={canSendToDevice} sendLabel={deviceSendLabel} onPreview={() => { setActiveMenu(null); void openPreview(book) }} onEdit={() => { setActiveMenu(null); void startEdit(book) }} onSend={() => { setActiveMenu(null); void send([book.id]) }} onDelete={() => { setActiveMenu(null); void deleteLocal(book) }} onToggle={e => toggle(book.id, e)} onOpen={() => { setFocusedDeviceBook(null); setFocusedBook(book); setEditing(false) }}/>
   )
   function toggleMenu(key: string, button: HTMLButtonElement) {
     if (activeMenu?.key === key) { setActiveMenu(null); return }
@@ -605,7 +660,7 @@ export default function App() {
       <nav className="rail-nav" aria-label="Library sections">
         <button className={`rail-item ${page === 'library' ? 'active' : ''}`} aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><LibraryBig/></button>
         <button className={`rail-item ${page === 'recent' ? 'active' : ''}`} aria-label="Recently added" aria-current={page === 'recent' ? 'page' : undefined} onClick={() => navigateTo('recent')}><Clock3/></button>
-        <button className={`rail-item ${page === 'device' ? 'active' : ''}`} data-drop-target={device ? 'device' : 'library'} aria-label="Reader" aria-current={page === 'device' ? 'page' : undefined} onClick={() => navigateTo('device')}>{device ? <span className="device-glyph"><KindleIcon/><i/></span> : <HardDrive/>}</button>
+        <button className={`rail-item ${page === 'device' ? 'active' : ''}`} data-drop-target={device ? 'device' : 'library'} aria-label="Reader" aria-current={page === 'device' ? 'page' : undefined} onClick={() => navigateTo('device')}>{device ? <span className="device-glyph"><HardDrive/><i/></span> : <HardDrive/>}</button>
         {previewTarget && <button className={`rail-item ${readerOpen ? 'active' : ''}`} aria-label="Return to book" title="Return to book" aria-current={readerOpen ? 'page' : undefined} onClick={() => setReaderOpen(true)}><BookOpen/></button>}
       </nav>
       <div className="rail-spacer"/>
@@ -632,9 +687,11 @@ export default function App() {
     <main className="main-panel" style={{ '--book-scale': bookSize / 100 } as React.CSSProperties} data-drop-target={isDevice ? 'device' : 'library'} onContextMenu={e => { if (readerOpen || (page !== 'library' && page !== 'recent' && page !== 'device')) return; const target = e.target as HTMLElement; if (target.closest('button,input,textarea,select,a,[contenteditable=true],.book-tile,.book-row,.device-book,.book-context-menu,.details-panel,.filter-popover,.activity-center')) return; e.preventDefault(); setActiveMenu(null); setPasteMenu({ left: Math.min(e.clientX, window.innerWidth - 220), top: Math.min(e.clientY, window.innerHeight - 56) }) }}>
       {readerOpen && previewTarget ? <ReaderView book={bookPreview?.book ?? previewTarget} preview={bookPreview} loading={previewLoading} error={previewError} chapterIndex={previewChapter} setChapterIndex={setPreviewChapter} search={readerSearch} findRef={readerFindRef} turnRef={readerTurnRef}/> : page === 'settings' ? <Settings updates={updater.state} onUpdates={() => { navigateTo('updates'); void updater.check() }} textSize={textSize} setTextSize={setTextSize} state={state} onOpenFolder={() => void run(() => bridge.openLibraryFolder())} onChangeLocation={() => void changeLibraryLocation()} onImportCalibre={() => void importCalibreLibrary()} changingLibrary={changingLibrary} controlsDisabled={busy || importGuard.current || transferActive}/> : page === 'updates' ? <Updates state={updater.state} checked={updater.checked} onCheck={() => void updater.check()} onDownload={() => void downloadUpdate()} onRestart={() => void updater.restart()} restartDisabled={restartDisabled}/> : <>
         {isDevice && device ? <section className="device-overview">
-          <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.root}</div></div>
+          <div className="device-hero-icon"><HardDrive size={25}/></div><div className="device-copy"><div className="eyebrow">CONNECTED DEVICE</div><h1>{device.name}</h1><div className="device-path">{device.transport === 'usb-storage' ? device.root : 'Connected over MTP'}</div>{device.requiresExplicitSelection && <div className="device-profile-warning">Set a book folder and supported formats before sending.</div>}</div>
+          {availableDevices.length > 1 && <div className="device-select-control"><DropdownSelect label="Connected reader" value={device.id} onChange={setActiveDeviceID} options={availableDevices.map(item => ({ value: item.id, label: item.name }))}/></div>}
           <div className="storage"><div className="storage-line"><span>{fmtBytes(device.freeBytes)} available</span><span>of {fmtBytes(device.totalBytes)}</span></div><div className="storage-track"><span style={{ width: `${Math.max(2, 100 - device.freeBytes / Math.max(device.totalBytes, 1) * 100)}%` }}/></div></div>
-          <button className="toolbar-button eject-button" title="Eject Kindle" aria-label="Eject Kindle" onClick={eject}><Power size={16}/><span>Eject</span></button>
+          <button className="toolbar-button" title={`Transfer settings for ${device.name}`} onClick={() => void openDevicePreferences(device)} disabled={busy || transferActive}><Settings2 size={16}/><span>Transfer settings</span></button>
+          <button className="toolbar-button eject-button" title={`Eject ${device.name}`} aria-label={`Eject ${device.name}`} onClick={eject}><Power size={16}/><span>Eject</span></button>
         </section> : null}
         <section className="content-heading">
           <div className="library-toolbar">
@@ -649,14 +706,14 @@ export default function App() {
             </div>
             {isDevice ? <>{deviceSelection.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${deviceSelection.length} selected books from device`} aria-label={`Remove ${deviceSelection.length} selected books from device`} onClick={() => void removeFromDevice()}><Trash2 size={16}/><span>Remove ({deviceSelection.length})</span></button>}{device && <button className="toolbar-button compact-action" title="Add from library" aria-label="Add from library" onClick={() => navigateTo('library')}><Send size={16}/><span>Add from library</span></button>}</> : <>
               {selected.length > 0 && <button className="toolbar-button danger-button compact-action" title={`Remove ${selected.length} selected books`} aria-label={`Remove ${selected.length} selected books`} onClick={() => void deleteSelected()}><Trash2 size={16}/><span>Remove ({selected.length})</span></button>}
-              {selected.length > 0 && device && <button className="toolbar-button compact-action" title={`Send ${selected.length} selected books to Kindle`} aria-label={`Send ${selected.length} selected books to Kindle`} onClick={() => void send(selected)} disabled={transferActive}><Send size={16}/><span>Send to Kindle <em>{selected.length}</em></span></button>}
+              {selected.length > 0 && device && <button className="toolbar-button compact-action" title={`Send ${selected.length} selected books to ${device.name}`} aria-label={`Send ${selected.length} selected books to ${device.name}`} onClick={() => void send(selected)} disabled={!canSendToDevice}><Send size={16}/><span>Send to {device.name} <em>{selected.length}</em></span></button>}
             </>}
           </div>
           {(authorFilter || genreFilter || languageFilter) && <div className="applied-filter-tags" aria-label="Applied filters">{authorFilter && <FilterTag label="Author" value={authorFilter === unknownFilter ? 'Unknown' : authorFilter} onRemove={() => setAuthorFilter('')}/ >}{genreFilter && <FilterTag label="Genre" value={genreFilter === unknownFilter ? 'Unknown' : genreFilter} onRemove={() => setGenreFilter('')}/ >}{languageFilter && <FilterTag label="Language" value={languageFilter === unknownFilter ? 'Unknown' : languageLabel(languageFilter)} onRemove={() => setLanguageFilter('')}/ >}<button className="clear-filters" onClick={() => { setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }}>Clear all</button></div>}
         </section>
         <div className={`book-area ${dragging ? 'dragging' : ''}`} data-drop-target={isDevice ? 'device' : 'library'}>
-          {dragging && <div className="drop-overlay"><div><Upload size={27}/><b>Drop EPUBs to add them</b><span>Your originals stay untouched</span></div></div>}
-          {isDevice ? device ? <DeviceList deviceBooks={visibleDeviceBooks} layout={layout} hasBooks={deviceBooks.length > 0} searching={!!query.trim() || hasFilters} loading={deviceBooksLoading} error={deviceBooksError} selection={deviceSelection} setSelection={setDeviceSelection} onClearSearch={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }} onRefresh={() => deviceRefreshRef.current()} onOpen={openDeviceDetails} menu={activeMenu} onMenu={(key, button) => toggleMenu(key, button)} onMenuClose={() => setActiveMenu(null)} onPreview={previewDeviceBook} onRemove={path => { setActiveMenu(null); confirmRemoveFromDevice([path]) }}/> : <DeviceDisconnected ejecting={!!ejectingDevice} onConnect={() => void addDevice()}/> : books.length ? page === 'recent' ? <div className="recent-timeline">
+          {dragging && <div className="drop-overlay"><div><Upload size={27}/><b>Drop books to add them</b><span>Your originals stay untouched</span></div></div>}
+          {isDevice ? device ? <DeviceList deviceBooks={visibleDeviceBooks} deviceName={device.name} layout={layout} hasBooks={deviceBooks.length > 0} searching={!!query.trim() || hasFilters} loading={deviceBooksLoading} error={deviceBooksError} selection={deviceSelection} setSelection={setDeviceSelection} onClearSearch={() => { setQuery(''); setAuthorFilter(''); setGenreFilter(''); setLanguageFilter('') }} onRefresh={() => deviceRefreshRef.current()} onOpen={openDeviceDetails} menu={activeMenu} onMenu={(key, button) => toggleMenu(key, button)} onMenuClose={() => setActiveMenu(null)} onPreview={previewDeviceBook} onRemove={path => { setActiveMenu(null); confirmRemoveFromDevice([path]) }}/> : <DeviceDisconnected ejecting={ejectingDevice?.name ?? ''} onConnect={() => void addDevice()}/> : books.length ? page === 'recent' ? <div className="recent-timeline">
             {recentGroups.map(group => <section className="recent-day" key={group.label}><h2 className="recent-day-heading">{group.label}</h2>
               {group.batches.map(batch => { const time = formatAddedTime(batch.timestamp); return <section className="recent-batch" key={batch.id}>
                 <div className="recent-batch-heading"><time dateTime={time?.dateTime} title={time?.title}>{time?.time}</time><span>{batch.books.length < batch.totalBooks ? `${batch.books.length} of ${batch.totalBooks} books shown` : `${batch.totalBooks} ${batch.totalBooks === 1 ? 'book' : 'books'} added`}</span></div>
@@ -672,16 +729,18 @@ export default function App() {
         </div>
       </>}
     </main>
-    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)} onChangeCover={() => void changeCover(focusedBook)} coverDisabled={busy || transferActive || changingLibrary}/></div>}
+    {importReport && <ImportReportDialog result={importReport} onClose={() => setImportReport(null)}/>}
+    {devicePreferencesDraft && <DevicePreferencesDialog draft={devicePreferencesDraft} onChange={setDevicePreferencesDraft} onClose={() => setDevicePreferencesDraft(null)} onSave={() => void saveDevicePreferences()} onReset={() => void resetDevicePreferences()} disabled={busy || transferActive}/>}
+    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} canSend={canSendToDevice} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)} onOpenFile={fileID => void run(() => bridge.openBookFile(focusedBook.id, fileID))} onAttachFiles={() => void attachBookFiles(focusedBook)} onChangeCover={() => void changeCover(focusedBook)} coverDisabled={busy || transferActive || changingLibrary}/> </div>}
     {bridge.preview && <input hidden type="file" ref={coverInputRef} accept="image/jpeg,image/png,.jpg,.jpeg,.png" aria-label="Choose cover image" onChange={e => { const file = e.currentTarget.files?.[0]; const book = coverTarget.current; e.currentTarget.value = ''; coverTarget.current = null; if (file && book) void changeCover(book, file) }}/ >}
-    {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
+    {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} deviceName={device?.name ?? 'Reader'} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
     {pasteMenu && <div className="book-context-menu paste-context-menu" style={{ left: pasteMenu.left, top: pasteMenu.top }} role="menu" onContextMenu={e => e.preventDefault()}><button role="menuitem" onClick={() => { setPasteMenu(null); pasteFilesRef.current() }}><span className="menu-item-icon"><Upload size={16}/></span>Paste books <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘V' : 'Ctrl+V'}</kbd></button></div>}
     {intake && <IntakeDialog request={intake} onCancel={() => setIntake(null)} onImportOnly={() => void confirmIntake('library')} onSend={() => void confirmIntake('send')}/>}
     {confirmation && <ConfirmDialog confirmation={confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const action = confirmation.action; setConfirmation(null); action() }}/>}
   </div>
 }
 
-function BookTile({ book, layout, selected, menu, onMenu, onMenuClose, canSend, sendLabel, onPreview, onEdit, onSend, onDelete, onToggle, onOpen }: { book: Book; layout: 'grid' | 'list'; selected: boolean; menu: MenuAnchor | null; onMenu: (button: HTMLButtonElement) => void; onMenuClose: () => void; canSend: boolean; sendLabel: string; onPreview: () => void; onEdit: () => void; onSend: () => void; onDelete: () => void; onToggle: (e: React.MouseEvent) => void; onOpen: () => void }) {
+function BookTile({ book, layout, selected, menu, onMenu, onMenuClose, canRead, canSend, sendLabel, onPreview, onEdit, onSend, onDelete, onToggle, onOpen }: { book: Book; layout: 'grid' | 'list'; selected: boolean; menu: MenuAnchor | null; onMenu: (button: HTMLButtonElement) => void; onMenuClose: () => void; canRead: boolean; canSend: boolean; sendLabel: string; onPreview: () => void; onEdit: () => void; onSend: () => void; onDelete: () => void; onToggle: (e: React.MouseEvent) => void; onOpen: () => void }) {
   const cover = bookCover(book)
   return <article className={`book-tile ${layout === 'list' ? 'book-row' : ''} ${selected ? 'book-selected' : ''}`}>
     <button className="book-main" onClick={onOpen} aria-label={`View ${book.title}`}>
@@ -690,11 +749,11 @@ function BookTile({ book, layout, selected, menu, onMenu, onMenuClose, canSend, 
     </button>
     <div className="book-menu-anchor" data-book-menu><button className="tile-more" title={`Actions for ${book.title}`} aria-label={`Actions for ${book.title}`} aria-haspopup="menu" aria-expanded={!!menu} onClick={e => { e.stopPropagation(); onMenu(e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
     <button className={`select-hit ${selected ? 'checked' : ''}`} aria-label={`${selected ? 'Deselect' : 'Select'} ${book.title}`} aria-pressed={selected} onClick={onToggle}>{selected && <Check size={12}/>}</button>
-    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'Read', icon: <BookOpen/>, onSelect: onPreview }, { label: 'Edit details', icon: <Pencil/>, onSelect: onEdit }, { label: deviceMenuLabel(canSend, sendLabel), icon: <Send/>, onSelect: onSend, disabled: !canSend }, { label: 'Remove from library', icon: <Trash2/>, onSelect: onDelete, danger: true }]}/>}
+    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'Read', icon: <BookOpen/>, onSelect: onPreview, disabled: !canRead }, { label: 'Edit details', icon: <Pencil/>, onSelect: onEdit }, { label: deviceMenuLabel(canSend, sendLabel), icon: <Send/>, onSelect: onSend, disabled: !canSend }, { label: 'Remove from library', icon: <Trash2/>, onSelect: onDelete, danger: true }]}/>}
   </article>
 }
 
-function deviceMenuLabel(canSend: boolean, label: string) { return canSend || label === 'Connect a Kindle to send' ? label : `${label} · transfer in progress` }
+function deviceMenuLabel(canSend: boolean, label: string) { return canSend || label === 'Connect a reader to send' || label === 'Set transfer settings first' || label === 'Transfer in progress' ? label : 'Set transfer settings first' }
 
 type MenuItem = { label: string; icon: React.ReactNode; onSelect: () => void; disabled?: boolean; danger?: boolean }
 function ContextMenu({ anchor, onClose, items }: { anchor: MenuAnchor; onClose: () => void; items: MenuItem[] }) {
@@ -713,7 +772,6 @@ function ContextMenu({ anchor, onClose, items }: { anchor: MenuAnchor; onClose: 
   </div>, document.body)
 }
 
-function KindleIcon() { return <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="1.75" width="13" height="16.5" rx="2.4" fill="none" stroke="currentColor" strokeWidth="1.45"/><path d="M5.7 4h8.6v10.2H5.7z" fill="none" stroke="currentColor" strokeWidth="1.1"/><circle cx="10" cy="16.1" r=".65" fill="currentColor"/></svg> }
 
 const unknownFilter = '__unknown__'
 function matchesFilter(values: string[] | undefined, selected: string) {
@@ -769,8 +827,19 @@ const readerPreviewParagraphs = [
 ]
 
 function ReaderView({ book, preview, loading, error, chapterIndex, setChapterIndex, search, findRef, turnRef }: { book: Book; preview: BookPreview | null; loading: boolean; error: string; chapterIndex: number; setChapterIndex: (index: number) => void; search: string; findRef: React.MutableRefObject<() => void>; turnRef: React.MutableRefObject<(direction: -1 | 1) => void> }) {
-  const chapters = preview?.chapters ?? []
-  const active = chapters[chapterIndex]
+  const selectedFile = preview?.fileID ? book.files?.find(file => file.id === preview.fileID) : undefined
+  const engineMode = !bridge.preview && !!selectedFile
+  const fixedLayout = !!selectedFile && ['pdf', 'cbz', 'cbr'].includes(selectedFile.format.toLowerCase())
+  const engine = useRef<ReaderSurfaceHandle>(null)
+  const [engineSections, setEngineSections] = useState<ReaderSection[]>([])
+  const [engineChapterIndex, setEngineChapterIndex] = useState(0)
+  const [engineProgress, setEngineProgress] = useState(0)
+  const [engineLoading, setEngineLoading] = useState(false)
+  const [engineError, setEngineError] = useState('')
+  const [fit, setFit] = useState<ReaderSettings['fit']>(() => readerSetting('attune.reader.fit', 'page') as ReaderSettings['fit'])
+  const chapters = engineMode ? engineSections.map(section => ({ id: section.id, title: section.title, href: '' })) : preview?.chapters ?? []
+  const currentChapterIndex = engineMode ? engineChapterIndex : chapterIndex
+  const active = chapters[currentChapterIndex]
   const frame = useRef<HTMLIFrameElement>(null)
   const panel = useRef<HTMLElement>(null)
   const suppressPageClickUntil = useRef(0)
@@ -788,7 +857,8 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
   const [progress, setProgress] = useState({ chapterIndex: 0, position: 0 })
   const [savedPosition, setSavedPosition] = useState(0)
   const [bookmarks, setBookmarks] = useState<import('./types').ReadingBookmark[]>([])
-  const [tocTab, setTocTab] = useState<'contents' | 'bookmarks'>('contents')
+  const [annotations, setAnnotations] = useState<ReaderAnnotation[]>([])
+  const [tocTab, setTocTab] = useState<'contents' | 'bookmarks' | 'annotations'>('contents')
   const [font, setFont] = useState(() => readerSetting('attune.reader.font', 'serif'))
   const [fontSize, setFontSize] = useState(() => Math.min(30, Math.max(14, Number(readerSetting('attune.reader.size', '19')) || 19)))
   const [lineHeight, setLineHeight] = useState(() => Math.min(2.4, Math.max(1.3, Number(readerSetting('attune.reader.spacing', '1.8')) || 1.8)))
@@ -799,6 +869,10 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
   const [theme, setTheme] = useState(() => readerSetting('attune.reader.theme', 'light'))
   const [layout, setLayout] = useState(() => readerSetting('attune.reader.layout', 'single'))
   const [sidePadding, setSidePadding] = useState(() => Math.min(96, Math.max(24, Number(readerSetting('attune.reader.padding', '48')) || 48)))
+  const readerSettings = useMemo<ReaderSettings>(() => ({ font: font as ReaderSettings['font'], fontSize, lineHeight, padding: sidePadding, layout: layout as ReaderSettings['layout'], theme: theme as ReaderSettings['theme'], fit }), [font, fontSize, lineHeight, sidePadding, layout, theme, fit])
+  const readerLoading = engineMode ? engineLoading : loading
+  const readerError = engineMode ? engineError || error : error
+  const currentProgress = engineMode ? engineProgress : progress.chapterIndex === currentChapterIndex ? progress.position : 0
   const safeHref = active?.href.startsWith('/preview/') && !active.href.startsWith('//') ? active.href : ''
   const previewHtml = bridge.preview ? `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font:19px/1.8 Georgia,serif;max-width:620px;margin:50px auto;padding:0 28px;color:#34343a}h1{font:600 27px/1.25 Georgia,serif}p{margin:1.1em 0}</style></head><body><h1>${escapeHTML(active?.title ?? 'A quiet beginning')}</h1>${readerPreviewParagraphs.map(paragraph => `<p>${escapeHTML(paragraph)}</p>`).join('')}<p>${escapeHTML(book.title)} stayed with her as the path curved toward the ridge. What waited beyond it would have to become a story of its own.</p></body></html>` : undefined
   const positionInFrame = (documentRef = frame.current?.contentDocument) => {
@@ -818,6 +892,30 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     void bridge.getReadingBookmarks(book.id).then(items => { if (live) setBookmarks(items) }).catch(() => {})
     return () => { live = false; window.clearTimeout(saveTimer.current) }
   }, [book.id])
+  useEffect(() => {
+    let live = true
+    setAnnotations([])
+    if (selectedFile) void bridge.getReaderAnnotations(book.id, selectedFile.id).then(items => { if (live) setAnnotations(items) }).catch(() => {})
+    return () => { live = false }
+  }, [book.id, selectedFile?.id])
+  useEffect(() => {
+    if (!engineMode || !engineSections.length || !annotations.some(item => item.cfi)) return
+    let live = true
+    void Promise.all(annotations.map(async item => {
+      if (!item.cfi) return item
+      const resolved = await engine.current?.resolve({ version: 1, kind: 'cfi', value: item.cfi, progress: 0 }).catch(() => false)
+      return { ...item, status: resolved ? 'placed' as const : 'unplaced' as const }
+    })).then(next => {
+      if (live && next.some((item, index) => item.status !== annotations[index]?.status)) setAnnotations(next)
+    })
+    return () => { live = false }
+  }, [engineMode, engineSections, annotations])
+  useEffect(() => {
+    setEngineSections([])
+    setEngineChapterIndex(0)
+    setEngineProgress(0)
+    setEngineError('')
+  }, [book.id, preview?.fileID])
   useEffect(() => {
     const onFullscreen = () => setFullscreen(document.fullscreenElement === panel.current)
     document.addEventListener('fullscreenchange', onFullscreen)
@@ -851,8 +949,8 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     return () => { window.removeEventListener('pointermove', onMove); window.clearTimeout(chromeTimer.current) }
   }, [fullscreen])
   useEffect(() => {
-    try { localStorage.setItem('attune.reader.font', font); localStorage.setItem('attune.reader.size', String(fontSize)); localStorage.setItem('attune.reader.spacing', String(lineHeight)); localStorage.setItem('attune.reader.theme', theme); localStorage.setItem('attune.reader.layout', layout); localStorage.setItem('attune.reader.padding', String(sidePadding)) } catch { /* Current controls remain available for the session. */ }
-  }, [font, fontSize, lineHeight, theme, layout, sidePadding])
+    try { localStorage.setItem('attune.reader.font', font); localStorage.setItem('attune.reader.size', String(fontSize)); localStorage.setItem('attune.reader.spacing', String(lineHeight)); localStorage.setItem('attune.reader.theme', theme); localStorage.setItem('attune.reader.layout', layout); localStorage.setItem('attune.reader.padding', String(sidePadding)); localStorage.setItem('attune.reader.fit', fit) } catch { /* Current controls remain available for the session. */ }
+  }, [font, fontSize, lineHeight, theme, layout, sidePadding, fit])
   const applyReaderStyles = (restorePosition?: number) => {
     const doc = frame.current?.contentDocument
     if (!doc?.head || !doc.body || doc !== loadedDocument.current) return
@@ -910,6 +1008,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     else if (doc.scrollingElement) doc.scrollingElement.scrollTop = savedPosition * Math.max(0, doc.scrollingElement.scrollHeight - doc.documentElement.clientHeight)
   }, [savedPosition, frameVersion])
   const turnPage = (direction: -1 | 1) => {
+    if (engineMode) { if (direction < 0) void engine.current?.previous(); else void engine.current?.next(); return }
     const doc = frame.current?.contentDocument, scroller = doc?.scrollingElement
     if (!doc || !scroller) return
     const pages = pagination.current
@@ -925,6 +1024,10 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     const atEdge = direction < 0 ? offset <= 2 : offset >= max - 2
     if (atEdge) { if (direction < 0 && chapterIndex > 0) setChapterIndex(chapterIndex - 1); else if (direction > 0 && chapterIndex < chapters.length - 1) setChapterIndex(chapterIndex + 1); return }
     scroller.scrollBy({ top: direction * doc.documentElement.clientHeight, behavior: 'smooth' })
+  }
+  const navigateSection = (index: number) => {
+    if (engineMode) { void engine.current?.navigate(index); return }
+    setChapterIndex(index)
   }
   turnRef.current = turnPage
   useEffect(() => {
@@ -999,21 +1102,31 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
   }, [frameVersion, loading, layout, turnRef])
   const addBookmark = async () => {
     if (!active) return
-    const position = positionInFrame()
+    const position = engineMode ? currentProgress : positionInFrame()
     try {
-      const bookmark = await bridge.addReadingBookmark(book.id, chapterIndex, position)
+      const bookmark = await bridge.addReadingBookmark(book.id, currentChapterIndex, position)
       setBookmarks(items => [bookmark, ...items])
       setTocTab('bookmarks')
     } catch { /* Keep the reader usable if bookmark storage fails. */ }
   }
   const openBookmark = (bookmark: import('./types').ReadingBookmark) => {
-    setChapterIndex(bookmark.chapterIndex)
+    navigateSection(bookmark.chapterIndex)
     setSavedPosition(bookmark.position)
     setProgress({ chapterIndex: bookmark.chapterIndex, position: bookmark.position })
     void bridge.saveReadingProgress(book.id, bookmark.chapterIndex, bookmark.position).catch(() => {})
   }
   useEffect(() => {
     findRef.current = () => {
+      if (engineMode) {
+        if (!search.trim()) return
+        void engine.current?.search(search).then(hits => {
+          if (hits[0]) {
+            engine.current?.goToSearchHit(hits[0])
+            setTocTab('contents')
+          }
+        }).catch(() => {})
+        return
+      }
       const doc = frame.current?.contentDocument
       const needle = search.trim().toLocaleLowerCase()
       if (!doc?.body || !needle) return
@@ -1052,7 +1165,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
         }
       }
     }
-  }, [search, findRef, active?.href])
+  }, [search, findRef, active?.href, engineMode])
   const onFrameLoad = () => {
     loadedDocument.current = frame.current?.contentDocument ?? null
     const position = pendingChapterPosition.current ?? (progress.chapterIndex === chapterIndex ? savedPosition : 0)
@@ -1062,31 +1175,60 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     setFrameVersion(version => version + 1)
     setProgress({ chapterIndex, position: positionInFrame() })
   }
-  const percent = progress.chapterIndex === chapterIndex ? Math.round(progress.position * 100) : 0
+  const percent = Math.round(currentProgress * 100)
   return <section ref={panel} className={`reader-view reader-theme-${theme} ${fullscreen ? 'reader-fullscreen' : ''}`} aria-label={`Reading ${book.title}`} onPointerMove={event => { if (fullscreen && event.clientY <= 76) { setChromeVisible(true); window.clearTimeout(chromeTimer.current); if (!chromeHovered.current) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 1800) } }}>
     {fullscreen && <div className="reader-chrome-reveal" aria-hidden="true" onPointerEnter={() => { setChromeVisible(true); window.clearTimeout(chromeTimer.current); chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 1800) }}/>}
-    <div className={`reader-subbar ${fullscreen ? 'fullscreen-chrome' : ''} ${chromeVisible ? 'chrome-visible' : ''}`} onPointerEnter={() => { chromeHovered.current = true; window.clearTimeout(chromeTimer.current); if (fullscreen) setChromeVisible(true) }} onPointerLeave={() => { chromeHovered.current = false; if (fullscreen) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 700) }}><button className="icon-button" aria-label={tocOpen ? 'Hide reader sidebar' : 'Show reader sidebar'} title="Contents and bookmarks" onClick={() => setTocOpen(open => !open)}>{tocOpen ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button><span className="reader-chapter-title">{active?.title || 'Contents'}</span><div className="reader-controls"><div className="reader-layout-switch" role="group" aria-label="Reading layout"><button className={`icon-button ${layout === 'continuous' ? 'selected' : ''}`} aria-label="Continuous layout" title="Continuous layout" aria-pressed={layout === 'continuous'} onClick={() => setLayout('continuous')}><AlignLeft size={16}/></button><button className={`icon-button ${layout === 'single' ? 'selected' : ''}`} aria-label="Single-page layout" title="Single-page layout" aria-pressed={layout === 'single'} onClick={() => setLayout('single')}><BookOpen size={16}/></button><button className={`icon-button ${layout === 'two-page' ? 'selected' : ''}`} aria-label="Two-page layout" title="Two-page layout" aria-pressed={layout === 'two-page'} onClick={() => setLayout('two-page')}><Columns2 size={16}/></button></div><button className="icon-button" title="Add bookmark" aria-label="Add bookmark" onClick={() => void addBookmark()}><BookmarkPlus size={16}/></button><div className="reader-text-menu"><button ref={textMenuTrigger} type="button" className="reader-dropdown reader-text-trigger" aria-label="Text settings" aria-haspopup="dialog" aria-expanded={textMenuOpen} onClick={event => { if (textMenuOpen) { setTextMenuOpen(false); return }; const rect = event.currentTarget.getBoundingClientRect(); setTextMenuPosition({ left: Math.max(8, Math.min(window.innerWidth - 296, rect.right - 280)), top: Math.max(8, Math.min(window.innerHeight - 292, rect.bottom + 8)) }); setTextMenuOpen(true) }}><Type size={15}/><span>Text</span><ChevronDown size={14}/></button>{textMenuOpen && createPortal(<div ref={textMenuPanel} className={`reader-text-menu-panel reader-theme-${theme}`} role="dialog" aria-label="Text settings" style={{ left: textMenuPosition.left, top: textMenuPosition.top }}><label className="reader-text-control"><span>Font size <output>{fontSize}px</output></span><input aria-label="Font size" type="range" min="14" max="30" step="1" value={fontSize} style={{ '--range-progress': `${((fontSize - 14) / 16) * 100}%` } as CSSProperties} onChange={e => setFontSize(Number(e.target.value))}/></label><div className="reader-text-family"><span>Font family</span><div className="reader-dropdown"><DropdownSelect label="Typeface" value={font} onChange={setFont} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'serif', label: 'Serif' }, { value: 'book', label: 'Book' }, { value: 'sans', label: 'Sans' }, { value: 'mono', label: 'Mono' }]}/></div></div><label className="reader-text-control"><span>Line spacing <output>{lineHeight.toFixed(1)}×</output></span><input aria-label="Line spacing" type="range" min="1.3" max="2.4" step="0.1" value={lineHeight} style={{ '--range-progress': `${((lineHeight - 1.3) / 1.1) * 100}%` } as CSSProperties} onChange={e => setLineHeight(Number(e.target.value))}/></label><label className="reader-text-control"><span>Text padding <output>{sidePadding}px</output></span><input aria-label="Text side padding" type="range" min="24" max="96" step="4" value={sidePadding} style={{ '--range-progress': `${((sidePadding - 24) / 72) * 100}%` } as CSSProperties} onChange={e => setSidePadding(Number(e.target.value))}/></label></div>, fullscreen && panel.current ? panel.current : document.body)}</div><div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'dark', label: 'Dark' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }]}/></div><button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button></div></div>
-    <div className={`reader-layout ${tocOpen ? '' : 'toc-hidden'}`}>
-      {tocOpen && <nav className="reader-toc" aria-label="Reader navigation"><div className="reader-toc-tabs"><button className={tocTab === 'contents' ? 'active' : ''} onClick={() => setTocTab('contents')}>Contents</button><button className={tocTab === 'bookmarks' ? 'active' : ''} onClick={() => setTocTab('bookmarks')}>Bookmarks {bookmarks.length > 0 && <span>{bookmarks.length}</span>}</button></div>{tocTab === 'contents' ? chapters.map((chapter, index) => <button key={chapter.id} className={index === chapterIndex ? 'active' : ''} onClick={() => setChapterIndex(index)}>{chapter.title || `Chapter ${index + 1}`}</button>) : bookmarks.length ? bookmarks.map(item => <div className="reader-bookmark" key={item.id}><button onClick={() => openBookmark(item)}><Bookmark size={14}/><span>{chapters[item.chapterIndex]?.title || `Chapter ${item.chapterIndex + 1}`}<small>{Math.round(item.position * 100)}%</small></span></button><button className="reader-bookmark-delete" aria-label="Delete bookmark" title="Delete bookmark" onClick={() => { void bridge.deleteReadingBookmark(book.id, item.id).then(() => setBookmarks(items => items.filter(candidate => candidate.id !== item.id))).catch(() => {}) }}><Trash size={14}/></button></div>) : <p className="reader-empty-bookmarks">No bookmarks yet. Add one from the toolbar while reading.</p>}</nav>}
-      <div className={`reader-content reader-content-${layout}`} onClick={event => { if (layout === 'continuous' || (event.target as HTMLElement).closest('button')) return; const bounds = event.currentTarget.getBoundingClientRect(); turnPage(event.clientX < bounds.left + bounds.width / 2 ? -1 : 1) }}>{loading ? <div className="preview-message"><LoaderCircle className="spinning"/>Opening book…</div> : error ? <div className="preview-message preview-error"><AlertCircle/>{error}</div> : !active ? <div className="preview-message">No readable chapters found.</div> : <iframe key={active.href} ref={frame} title={`${book.title}: ${active.title}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" src={bridge.preview ? undefined : safeHref || undefined} srcDoc={previewHtml} style={{ width: layout === 'two-page' ? 'min(1280px, 100%)' : layout === 'single' ? 'min(760px, 100%)' : '100%' }} onLoad={onFrameLoad}/ >}{layout !== 'continuous' && !loading && !error && active && <><button className="reader-page-turn reader-page-turn-prev" aria-label="Previous page" title="Previous page" onClick={() => turnPage(-1)}><ChevronLeft size={21}/></button><button className="reader-page-turn reader-page-turn-next" aria-label="Next page" title="Next page" onClick={() => turnPage(1)}><ChevronRight size={21}/></button></>}</div>
+    <div className={`reader-subbar ${fullscreen ? 'fullscreen-chrome' : ''} ${chromeVisible ? 'chrome-visible' : ''}`} onPointerEnter={() => { chromeHovered.current = true; window.clearTimeout(chromeTimer.current); if (fullscreen) setChromeVisible(true) }} onPointerLeave={() => { chromeHovered.current = false; if (fullscreen) chromeTimer.current = window.setTimeout(() => setChromeVisible(false), 700) }}>
+      <button className="icon-button" aria-label={tocOpen ? 'Hide reader sidebar' : 'Show reader sidebar'} title="Contents and bookmarks" onClick={() => setTocOpen(open => !open)}>{tocOpen ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button>
+      <span className="reader-chapter-title">{active?.title || 'Contents'}</span>
+      <div className="reader-controls">
+        <div className="reader-layout-switch" role="group" aria-label="Reading layout">
+          <button className={`icon-button ${layout === 'continuous' ? 'selected' : ''}`} aria-label="Continuous layout" title="Continuous layout" aria-pressed={layout === 'continuous'} onClick={() => setLayout('continuous')}><AlignLeft size={16}/></button>
+          <button className={`icon-button ${layout === 'single' ? 'selected' : ''}`} aria-label="Single-page layout" title="Single-page layout" aria-pressed={layout === 'single'} onClick={() => setLayout('single')}><BookOpen size={16}/></button>
+          <button className={`icon-button ${layout === 'two-page' ? 'selected' : ''}`} aria-label="Two-page layout" title="Two-page layout" aria-pressed={layout === 'two-page'} onClick={() => setLayout('two-page')}><Columns2 size={16}/></button>
+        </div>
+        <button className="icon-button" title="Add bookmark" aria-label="Add bookmark" onClick={() => void addBookmark()}><BookmarkPlus size={16}/></button>
+        {!fixedLayout ? <div className="reader-text-menu">
+          <button ref={textMenuTrigger} type="button" className="reader-dropdown reader-text-trigger" aria-label="Text settings" aria-haspopup="dialog" aria-expanded={textMenuOpen} onClick={event => { if (textMenuOpen) { setTextMenuOpen(false); return }; const rect = event.currentTarget.getBoundingClientRect(); setTextMenuPosition({ left: Math.max(8, Math.min(window.innerWidth - 296, rect.right - 280)), top: Math.max(8, Math.min(window.innerHeight - 292, rect.bottom + 8)) }); setTextMenuOpen(true) }}><Type size={15}/><span>Text</span><ChevronDown size={14}/></button>
+          {textMenuOpen && createPortal(<div ref={textMenuPanel} className={`reader-text-menu-panel reader-theme-${theme}`} role="dialog" aria-label="Text settings" style={{ left: textMenuPosition.left, top: textMenuPosition.top }}>
+            <label className="reader-text-control"><span>Font size <output>{fontSize}px</output></span><input aria-label="Font size" type="range" min="14" max="30" step="1" value={fontSize} style={{ '--range-progress': `${((fontSize - 14) / 16) * 100}%` } as CSSProperties} onChange={e => setFontSize(Number(e.target.value))}/></label>
+            <div className="reader-text-family"><span>Font family</span><div className="reader-dropdown"><DropdownSelect label="Typeface" value={font} onChange={setFont} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'serif', label: 'Serif' }, { value: 'book', label: 'Book' }, { value: 'sans', label: 'Sans' }, { value: 'mono', label: 'Mono' }]}/></div></div>
+            <label className="reader-text-control"><span>Line spacing <output>{lineHeight.toFixed(1)}×</output></span><input aria-label="Line spacing" type="range" min="1.3" max="2.4" step="0.1" value={lineHeight} style={{ '--range-progress': `${((lineHeight - 1.3) / 1.1) * 100}%` } as CSSProperties} onChange={e => setLineHeight(Number(e.target.value))}/></label>
+            <label className="reader-text-control"><span>Text padding <output>{sidePadding}px</output></span><input aria-label="Text side padding" type="range" min="24" max="96" step="4" value={sidePadding} style={{ '--range-progress': `${((sidePadding - 24) / 72) * 100}%` } as CSSProperties} onChange={e => setSidePadding(Number(e.target.value))}/></label>
+          </div>, fullscreen && panel.current ? panel.current : document.body)}
+        </div> : <div className="reader-dropdown reader-fit-dropdown"><DropdownSelect label="Page fit" value={fit} onChange={value => setFit(value as ReaderSettings['fit'])} options={[{ value: 'page', label: 'Fit page' }, { value: 'width', label: 'Fit width' }]}/></div>}
+        <div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'dark', label: 'Dark' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }]}/></div>
+        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
+      </div>
     </div>
-    <div className="reader-progress"><span style={{ width: `${(chapterIndex + percent / 100) / Math.max(1, chapters.length) * 100}%` }}/></div>
+    <div className={`reader-layout ${tocOpen ? '' : 'toc-hidden'}`}>
+      {tocOpen && <nav className="reader-toc" aria-label="Reader navigation">
+        <div className="reader-toc-tabs"><button style={{ width: '33.333%' }} className={tocTab === 'contents' ? 'active' : ''} onClick={() => setTocTab('contents')}>Contents</button><button style={{ width: '33.333%' }} className={tocTab === 'bookmarks' ? 'active' : ''} onClick={() => setTocTab('bookmarks')}>Bookmarks {bookmarks.length > 0 && <span>{bookmarks.length}</span>}</button><button style={{ width: '33.333%' }} className={tocTab === 'annotations' ? 'active' : ''} onClick={() => setTocTab('annotations')}>Notes {annotations.length > 0 && <span>{annotations.length}</span>}</button></div>
+        {tocTab === 'contents' ? chapters.map((chapter, index) => <button key={chapter.id} className={index === currentChapterIndex ? 'active' : ''} onClick={() => navigateSection(index)}>{chapter.title || `Chapter ${index + 1}`}</button>) : tocTab === 'bookmarks' ? bookmarks.length ? bookmarks.map(item => <div className="reader-bookmark" key={item.id}><button onClick={() => openBookmark(item)}><Bookmark size={14}/><span>{chapters[item.chapterIndex]?.title || `Chapter ${item.chapterIndex + 1}`}<small>{Math.round(item.position * 100)}%</small></span></button><button className="reader-bookmark-delete" aria-label="Delete bookmark" title="Delete bookmark" onClick={() => { void bridge.deleteReadingBookmark(book.id, item.id).then(() => setBookmarks(items => items.filter(candidate => candidate.id !== item.id))).catch(() => {}) }}><Trash size={14}/></button></div>) : <p className="reader-empty-bookmarks">No bookmarks yet. Add one from the toolbar while reading.</p> : annotations.length ? annotations.map(item => <div className="reader-bookmark reader-annotation" key={item.id}><button disabled={!engineMode || (!item.cfi && !item.quote)} title={!item.cfi && !item.quote ? 'This note has no text anchor' : 'Open this note in the book'} onClick={() => { if (!engineMode) return; void (async () => { let found = false; if (item.cfi) found = await engine.current?.restore({ version: 1, kind: 'cfi', value: item.cfi, progress: 0 }) ?? false; else if (item.quote) { const hits = await engine.current?.search(item.quote.slice(0, 500)) ?? []; if (hits.length === 1) { engine.current?.goToSearchHit(hits[0]); found = true } }; if (found) setAnnotations(items => items.map(candidate => candidate.id === item.id ? { ...candidate, status: 'placed' } : candidate)) })() }}><Bookmark size={14}/><span>{item.kind[0].toUpperCase() + item.kind.slice(1)}<small>{item.quote || item.text || item.note || 'No note text'} · {item.status === 'placed' ? 'Placed' : 'Unplaced'}</small></span></button></div>) : <p className="reader-empty-bookmarks">No imported notes or highlights.</p>}
+      </nav>}
+      <div className={`reader-content reader-content-${layout}`} tabIndex={0} onKeyDown={event => { if (event.target !== event.currentTarget && (event.target as HTMLElement).closest('button,input,select,textarea')) return; if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); turnPage(event.key === 'ArrowLeft' ? -1 : 1) } }} onClick={event => { if (layout === 'continuous' || (event.target as HTMLElement).closest('button')) return; const bounds = event.currentTarget.getBoundingClientRect(); turnPage(event.clientX < bounds.left + bounds.width / 2 ? -1 : 1) }}>
+        {engineMode && selectedFile && <ReaderSurface key={`${book.id}:${selectedFile.id}`} ref={engine} bookID={book.id} file={selectedFile} legacyProgress={progress} settings={readerSettings} onSections={setEngineSections} onLocation={(locator, index) => { setEngineChapterIndex(index); setEngineProgress(locator.progress); setProgress({ chapterIndex: index, position: locator.progress }); setSavedPosition(locator.progress) }} onError={setEngineError} onLoading={setEngineLoading}/>}
+        {engineMode ? (readerLoading || readerError) && <div className={`reader-engine-message ${readerError ? 'preview-error' : ''}`}>{readerError ? <><AlertCircle/>{readerError}</> : <><LoaderCircle className="spinning"/>Opening book…</>}</div> : readerLoading ? <div className="preview-message"><LoaderCircle className="spinning"/>Opening book…</div> : readerError ? <div className="preview-message preview-error"><AlertCircle/>{readerError}</div> : !active ? <div className="preview-message">No readable chapters found.</div> : <iframe key={active.href} ref={frame} title={`${book.title}: ${active.title}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" src={bridge.preview ? undefined : safeHref || undefined} srcDoc={previewHtml} style={{ width: layout === 'two-page' ? 'min(1280px, 100%)' : layout === 'single' ? 'min(760px, 100%)' : '100%' }} onLoad={onFrameLoad}/>}
+        {layout !== 'continuous' && !readerLoading && !readerError && active && <><button className="reader-page-turn reader-page-turn-prev" aria-label="Previous page" title="Previous page" onClick={() => turnPage(-1)}><ChevronLeft size={21}/></button><button className="reader-page-turn reader-page-turn-next" aria-label="Next page" title="Next page" onClick={() => turnPage(1)}><ChevronRight size={21}/></button></>}
+      </div>
+    </div>
+    <div className="reader-progress"><span style={{ width: `${engineMode ? currentProgress * 100 : (currentChapterIndex + percent / 100) / Math.max(1, chapters.length) * 100}%` }}/></div>
   </section>
 }
 function escapeHTML(value: string) { return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!) ) }
 
-function DeviceDisconnected({ ejecting, onConnect }: { ejecting: boolean; onConnect: () => void }) {
-  return <div className="empty-device"><div className="empty-art">{ejecting ? <LoaderCircle className="spinning" size={32}/> : <><HardDrive size={35}/><span>×</span></>}</div><h2>{ejecting ? 'Ejecting Kindle…' : 'No reader connected'}</h2><p>{ejecting ? 'Wait while the Kindle disconnects safely.' : 'Connect a reader to browse or manage its books.'}</p>{!ejecting && <button className="toolbar-button" onClick={onConnect}><Plus size={16}/> Add device</button>}</div>
+function DeviceDisconnected({ ejecting, onConnect }: { ejecting: string; onConnect: () => void }) {
+  return <div className="empty-device"><div className="empty-art">{ejecting ? <LoaderCircle className="spinning" size={32}/> : <><HardDrive size={35}/><span>×</span></>}</div><h2>{ejecting ? `Ejecting ${ejecting}…` : 'No reader connected'}</h2><p>{ejecting ? 'Wait while the device disconnects safely.' : 'Connect a reader to browse or manage its books.'}</p>{!ejecting && <button className="toolbar-button" onClick={onConnect}><Plus size={16}/> Add device</button>}</div>
 }
 
-function DeviceList({ deviceBooks, layout, hasBooks, searching, loading, error, selection, setSelection, onClearSearch, onRefresh, onOpen, menu, onMenu, onMenuClose, onPreview, onRemove }: { deviceBooks: DeviceBook[]; layout: 'grid' | 'list'; hasBooks: boolean; searching: boolean; loading: boolean; error: string; selection: string[]; setSelection: React.Dispatch<React.SetStateAction<string[]>>; onClearSearch: () => void; onRefresh: () => void; onOpen: (book: DeviceBook) => void; menu: MenuAnchor | null; onMenu: (key: string, button: HTMLButtonElement) => void; onMenuClose: () => void; onPreview: (bookID: string) => void; onRemove: (path: string) => void }) {
-  if (!deviceBooks.length && loading) return <div className="empty-device" role="status" aria-live="polite"><div className="empty-art"><LoaderCircle className="spinning" size={32}/></div><h2>Reading Kindle contents…</h2><p>Looking for books on the connected device.</p></div>
-  if (!deviceBooks.length && !hasBooks && error) return <div className="empty-device"><div className="empty-art"><AlertCircle size={32}/></div><h2>Couldn’t read Kindle contents</h2><p>{error}</p><button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Try again</button></div>
-  return <>{error && <InlineBanner className="device-load-error" action={<button className="quiet-button" onClick={onRefresh}>Try again</button>}>Couldn’t refresh Kindle contents. Showing the last loaded books.</InlineBanner>}{!deviceBooks.length ? <div className="empty-device"><div className="empty-art"><HardDrive size={35}/><span>· · ·</span></div><h2>{searching && hasBooks ? 'No Kindle books match these filters' : 'No books found on this Kindle'}</h2><p>{searching && hasBooks ? 'Try another search or clear your filters.' : 'Books in the device’s documents folder will appear here.'}</p>{searching && hasBooks ? <button className="quiet-button" onClick={onClearSearch}>Clear filters</button> : <button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Refresh device</button>}</div> : layout === 'grid' ? <div className="book-collection device-collection">{deviceBooks.map(book => <DeviceTile key={book.path} book={book} selected={selection.includes(book.path)} menu={menu?.key === `device:${book.path}` ? menu : null} onMenu={button => onMenu(`device:${book.path}`, button)} onMenuClose={onMenuClose} onPreview={() => onPreview(book.bookID)} onRemove={() => onRemove(book.path)} onToggle={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} onOpen={() => onOpen(book)}/>)}</div> : <div className="device-list" role="list">
+function DeviceList({ deviceBooks, deviceName, layout, hasBooks, searching, loading, error, selection, setSelection, onClearSearch, onRefresh, onOpen, menu, onMenu, onMenuClose, onPreview, onRemove }: { deviceBooks: DeviceBook[]; deviceName: string; layout: 'grid' | 'list'; hasBooks: boolean; searching: boolean; loading: boolean; error: string; selection: string[]; setSelection: React.Dispatch<React.SetStateAction<string[]>>; onClearSearch: () => void; onRefresh: () => void; onOpen: (book: DeviceBook) => void; menu: MenuAnchor | null; onMenu: (key: string, button: HTMLButtonElement) => void; onMenuClose: () => void; onPreview: (bookID: string) => void; onRemove: (path: string) => void }) {
+  if (!deviceBooks.length && loading) return <div className="empty-device" role="status" aria-live="polite"><div className="empty-art"><LoaderCircle className="spinning" size={32}/></div><h2>Reading {deviceName} contents…</h2><p>Looking for books on the connected device.</p></div>
+  if (!deviceBooks.length && !hasBooks && error) return <div className="empty-device"><div className="empty-art"><AlertCircle size={32}/></div><h2>Couldn’t read {deviceName}</h2><p>{error}</p><button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Try again</button></div>
+  return <>{error && <InlineBanner className="device-load-error" action={<button className="quiet-button" onClick={onRefresh}>Try again</button>}>Couldn’t refresh {deviceName}. Showing the last loaded books.</InlineBanner>}{!deviceBooks.length ? <div className="empty-device"><div className="empty-art"><HardDrive size={35}/><span>· · ·</span></div><h2>{searching && hasBooks ? `No ${deviceName} books match these filters` : `No books found on ${deviceName}`}</h2><p>{searching && hasBooks ? 'Try another search or clear your filters.' : 'Books in its configured book folders will appear here.'}</p>{searching && hasBooks ? <button className="quiet-button" onClick={onClearSearch}>Clear filters</button> : <button className="toolbar-button" onClick={onRefresh}><RefreshCw size={16}/> Refresh device</button>}</div> : layout === 'grid' ? <div className="book-collection device-collection">{deviceBooks.map(book => <DeviceTile key={book.path} book={book} selected={selection.includes(book.path)} menu={menu?.key === `device:${book.path}` ? menu : null} onMenu={button => onMenu(`device:${book.path}`, button)} onMenuClose={onMenuClose} onPreview={() => onPreview(book.bookID)} onRemove={() => onRemove(book.path)} onToggle={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} onOpen={() => onOpen(book)}/>)}</div> : <div className="device-list" role="list">
     {deviceBooks.map(book => <div role="listitem" className={`device-book ${selection.includes(book.path) ? 'row-selected' : ''}`} key={book.path}>
       <button className={`device-check ${selection.includes(book.path) ? 'checked' : ''}`} onClick={() => setSelection(s => s.includes(book.path) ? s.filter(p => p !== book.path) : [...s, book.path])} aria-label={`Select ${book.title || fileTitle(book.name)}`} aria-pressed={selection.includes(book.path)}>{selection.includes(book.path) && <Check size={13}/>}</button>
-      <div className="device-book-icon"><BookOpen size={17}/></div><div className="device-book-copy"><button onClick={() => onOpen(book)}>{book.title || fileTitle(book.name)}</button><span>{extensionFromPath(book.path)} · {fmtBytes(book.size)}</span></div><span className="device-book-status">On Kindle</span><div className="book-menu-anchor" data-book-menu><button className="tile-more" aria-label={`Actions for ${book.title || fileTitle(book.name)}`} aria-haspopup="menu" aria-expanded={menu?.key === `device:${book.path}`} onClick={e => { e.stopPropagation(); onMenu(`device:${book.path}`, e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
-      {menu?.key === `device:${book.path}` && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: () => onOpen(book) }, { label: 'Read', icon: <BookOpen/>, onSelect: () => onPreview(book.bookID), disabled: !book.bookID }, { label: 'Remove from Kindle', icon: <Trash2/>, onSelect: () => onRemove(book.path), danger: true }]}/>}
+      <div className="device-book-icon"><BookOpen size={17}/></div><div className="device-book-copy"><button onClick={() => onOpen(book)}>{book.title || fileTitle(book.name)}</button><span>{extensionFromPath(book.path)} · {fmtBytes(book.size)}</span></div><span className="device-book-status">On device</span><div className="book-menu-anchor" data-book-menu><button className="tile-more" aria-label={`Actions for ${book.title || fileTitle(book.name)}`} aria-haspopup="menu" aria-expanded={menu?.key === `device:${book.path}`} onClick={e => { e.stopPropagation(); onMenu(`device:${book.path}`, e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
+      {menu?.key === `device:${book.path}` && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: () => onOpen(book) }, { label: 'Read', icon: <BookOpen/>, onSelect: () => onPreview(book.bookID), disabled: !book.bookID || !book.canRead }, { label: 'Remove from device', icon: <Trash2/>, onSelect: () => onRemove(book.path), danger: true }]}/>}
     </div>)}
   </div>}</>
 }
@@ -1102,16 +1244,17 @@ function DeviceTile({ book, selected, menu, onMenu, onMenuClose, onPreview, onRe
     <span className="book-meta"><strong title={title}>{title}</strong><span title={(book.authors ?? []).join(', ')}>{book.authors?.join(', ') || 'Unknown author'}</span></span></button>
     <div className="book-menu-anchor" data-book-menu><button className="tile-more" aria-label={`Actions for ${title}`} aria-haspopup="menu" aria-expanded={!!menu} onClick={e => { e.stopPropagation(); onMenu(e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
     <button className={`select-hit ${selected ? 'checked' : ''}`} aria-label={`${selected ? 'Deselect' : 'Select'} ${title}`} aria-pressed={selected} onClick={onToggle}>{selected && <Check size={12}/>}</button>
-    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: onOpen }, { label: 'Read', icon: <BookOpen/>, onSelect: onPreview, disabled: !book.bookID }, { label: 'Remove from Kindle', icon: <Trash2/>, onSelect: onRemove, danger: true }]}/>}
+    {menu && <ContextMenu anchor={menu} onClose={onMenuClose} items={[{ label: 'View details', icon: <BookOpen/>, onSelect: onOpen }, { label: 'Read', icon: <BookOpen/>, onSelect: onPreview, disabled: !book.bookID || !book.canRead }, { label: 'Remove from device', icon: <Trash2/>, onSelect: onRemove, danger: true }]}/>}
   </article>
 }
 
-function DeviceDetailsPanel({ book, libraryBook, onClose, onPreview }: { book: DeviceBook; libraryBook?: Book; onClose: () => void; onPreview: (book: Book) => void }) {
+function DeviceDetailsPanel({ book, deviceName, libraryBook, onClose, onPreview }: { book: DeviceBook; deviceName: string; libraryBook?: Book; onClose: () => void; onPreview: (book: Book) => void }) {
   const title = book.title || fileTitle(book.name)
   const cover = book.coverURL ? bridge.previewCover(book.coverURL) : missingCover
-  return <aside className="details-panel device-details-panel" aria-label="Device book details"><div className="details-top"><span>ON KINDLE</span><button className="icon-button" onClick={onClose} aria-label="Close book details"><PanelRightClose size={18}/></button></div>
+  const canRead = !!libraryBook && (!libraryBook.files?.length || libraryBook.files.some(file => file.canRead))
+  return <aside className="details-panel device-details-panel" aria-label="Device book details"><div className="details-top"><span>ON {deviceName.toUpperCase()}</span><button className="icon-button" onClick={onClose} aria-label="Close book details"><PanelRightClose size={18}/></button></div>
     <div className="detail-cover"><img src={cover} alt={`${title} cover`} onError={e => { e.currentTarget.src = missingCover }}/></div><h2 className="detail-title">{title}</h2><p className="detail-author">{book.authors?.join(', ') || 'Unknown author'}</p>
-    <div className="details-actions">{libraryBook ? <button className="toolbar-button primary-button" onClick={() => onPreview(libraryBook)}><BookOpen size={15}/> Read</button> : <p className="device-preview-unavailable">A preview is available only for books in this library.</p>}</div>
+    <div className="details-actions">{canRead && libraryBook ? <button className="toolbar-button primary-button" onClick={() => onPreview(libraryBook)}><BookOpen size={15}/> Read</button> : <p className="device-preview-unavailable">This format can’t be read in Attune yet.</p>}</div>
     <MetadataDetails metadata={book} format={extensionFromPath(book.path)} fileSize={book.size}/>
   </aside>
 }
@@ -1165,12 +1308,15 @@ function dateLabel(value: string) {
 }
 
 function EmptyState({ recent, searching, onImport, onClear }: { recent: boolean; searching: boolean; onImport: () => void; onClear: () => void }) {
-  return <div className="empty-state"><div className="empty-art"><div className="empty-book book-a"/><div className="empty-book book-b"/><div className="empty-book book-c"/><span className="sparkle s1">✳</span><span className="sparkle s2">✦</span></div><h2>{searching ? 'No books match that search' : recent ? 'Nothing new just yet' : 'Attune your library'}</h2><p>{searching ? 'Try a different title or author.' : recent ? 'Books you add in the last 30 days will show up here.' : 'Bring your EPUBs together in one lovely little library.'}</p>{searching ? <button className="quiet-button" onClick={onClear}>Clear search</button> : !recent && <><button className="toolbar-button primary-button" onClick={onImport}><Plus size={17}/> Import EPUBs</button><span className="drop-hint">or drop EPUB files anywhere in this window</span></>}</div>
+  return <div className="empty-state"><div className="empty-art"><div className="empty-book book-a"/><div className="empty-book book-b"/><div className="empty-book book-c"/><span className="sparkle s1">✳</span><span className="sparkle s2">✦</span></div><h2>{searching ? 'No books match that search' : recent ? 'Nothing new just yet' : 'Attune your library'}</h2><p>{searching ? 'Try a different title or author.' : recent ? 'Books you add in the last 30 days will show up here.' : 'Bring your books together in one lovely little library.'}</p>{searching ? <button className="quiet-button" onClick={onClear}>Clear search</button> : !recent && <><button className="toolbar-button primary-button" onClick={onImport}><Plus size={17}/> Import books</button><span className="drop-hint">or drop supported book files anywhere in this window</span></>}</div>
 }
 
 const missingCover = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 620"><rect width="420" height="620" fill="#e6e6e8"/><path d="M145 230c0-12 10-22 22-22h80c12 0 22 10 22 22v150c0 12-10 22-22 22h-80c-12 0-22-10-22-22z" fill="#c8c9cd"/><path d="M210 208v194" stroke="#eee" stroke-width="7"/><path d="M163 263h38m-38 22h32m-32 22h36m38-44h28m-28 22h28m-28 22h28" stroke="#eee" stroke-width="5" stroke-linecap="round"/></svg>')}`
-function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave, onCancel, onDelete, onSend, onPreview, onChangeCover, coverDisabled }: { book: Book; editing: boolean; draft: EditDraft; setDraft: React.Dispatch<React.SetStateAction<EditDraft>>; onClose: () => void; onEdit: () => void; onSave: () => void; onCancel: () => void; onDelete: () => void; onSend: () => void; onPreview: () => void; onChangeCover: () => void; coverDisabled: boolean }) {
+function DetailsPanel({ book, editing, draft, setDraft, canSend, onClose, onEdit, onSave, onCancel, onDelete, onSend, onPreview, onOpenFile, onAttachFiles, onChangeCover, coverDisabled }: { book: Book; editing: boolean; draft: EditDraft; setDraft: React.Dispatch<React.SetStateAction<EditDraft>>; canSend: boolean; onClose: () => void; onEdit: () => void; onSave: () => void; onCancel: () => void; onDelete: () => void; onSend: () => void; onPreview: () => void; onOpenFile: (fileID: string) => void; onAttachFiles: () => void; onChangeCover: () => void; coverDisabled: boolean }) {
   const update = (key: keyof EditDraft, value: string) => setDraft(current => ({ ...current, [key]: value }))
+  const files = book.files ?? []
+  const hasReadableFile = files.some(file => file.canRead)
+  const preferredFormat = files.find(file => file.id === book.preferredFileID)?.format ?? files.find(file => file.preferred)?.format ?? files[0]?.format ?? 'EPUB'
   return <aside className="details-panel" aria-label="Book details">
     <div className="details-top"><span>BOOK DETAILS</span><button className="icon-button" onClick={onClose} aria-label="Close book details"><PanelRightClose size={18}/></button></div>
     <div className="detail-cover"><img src={bookCover(book)} alt={`${book.title} cover`} onError={e => { e.currentTarget.src = missingCover }}/></div>
@@ -1185,8 +1331,8 @@ function DetailsPanel({ book, editing, draft, setDraft, onClose, onEdit, onSave,
       <div className="edit-series"><label>Series<input value={draft.series} onChange={e => update('series', e.target.value)}/></label><label>Index<input value={draft.seriesIndex} onChange={e => update('seriesIndex', e.target.value)}/></label></div>
       <label>Description<textarea rows={5} value={draft.description} onChange={e => update('description', e.target.value)}/></label>
       <div className="edit-actions"><button className="quiet-button" onClick={onCancel}>Cancel</button><button className="toolbar-button primary-button" onClick={onSave} disabled={!draft.title.trim()}><Check size={15}/> Save</button></div>
-    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions"><button className="toolbar-button primary-button" onClick={onPreview}><BookOpen size={15}/> Read</button><button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to Kindle</button><button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><MetadataDetails metadata={book} format="EPUB" fileSize={book.fileSize}/></>}
-    <div className="detail-footer"><span>Original EPUB is safely stored on this computer.</span><CircleHelp size={15}/></div>
+    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions">{hasReadableFile && <button className="toolbar-button primary-button" onClick={onPreview}><BookOpen size={15}/> Read</button>}{canSend && <button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to device</button>}<button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><section className="book-files" aria-label="Book files"><div className="book-files-heading"><h3>Files</h3><button className="quiet-button" disabled={coverDisabled} onClick={onAttachFiles}><Plus size={14}/> Add files</button></div>{files.length ? files.map(file => <div className="book-file-row" key={file.id}><div><strong>{file.format.toUpperCase()}</strong><span>{file.filename} · {fmtBytes(file.size)}{file.preferred ? ' · Preferred' : ''}</span></div>{file.canRead ? <button className="quiet-button" onClick={onPreview}>Read</button> : <button className="quiet-button" onClick={() => onOpenFile(file.id)}>Open</button>}</div>) : <p className="book-files-empty">No files added yet.</p>}</section><MetadataDetails metadata={book} format={preferredFormat.toUpperCase()} fileSize={book.fileSize}/></>}
+    <div className="detail-footer"><span>Imported book files are stored in your Attune library.</span><CircleHelp size={15}/></div>
   </aside>
 }
 
@@ -1231,10 +1377,41 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
     </section>
   </div>
 }
-function Settings({ updates, onUpdates, textSize, setTextSize, state, onOpenFolder, onChangeLocation, onImportCalibre, changingLibrary, controlsDisabled }: { updates: UpdateState; onUpdates: () => void; textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; onImportCalibre: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
-  const location = state?.libraryPath || 'Unavailable'
-  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card calibre-import-card"><div><strong>Import Calibre library</strong><span>Copies EPUBs, metadata and covers into Attune. Your Calibre library stays unchanged.</span></div><button className="toolbar-button" onClick={onImportCalibre} disabled={controlsDisabled}>Choose library…</button></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><UpdateSettingsCard state={updates} onOpen={onUpdates}/><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
+
+function ImportReportDialog({ result, onClose }: { result: ImportResult; onClose: () => void }) {
+  return <div className="confirm-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="confirm-dialog import-report-dialog" role="dialog" aria-modal="true" aria-labelledby="import-report-title">
+      <h2 id="import-report-title">Import report</h2>
+      <p>{result.imported} added · {result.duplicates} already present{result.skipped ? ` · ${result.skipped} skipped` : ''}. {result.errors.length} file {result.errors.length === 1 ? 'issue' : 'issues'} need attention.</p>
+      <ul className="import-report-errors">{result.errors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}</ul>
+      <div className="confirm-actions"><button className="toolbar-button primary-button" autoFocus onClick={onClose}>Done</button></div>
+    </section>
+  </div>
 }
 
-function stageName(stage: string) { return ({ queued: 'Waiting in queue', converting: 'Converting for Kindle', transferring: 'Copying to device', done: 'Saved to Kindle', cancelled: 'Transfer cancelled', error: 'Check your device and try again' } as Record<string, string>)[stage] ?? 'Preparing transfer' }
+function DevicePreferencesDialog({ draft, onChange, onClose, onSave, onReset, disabled }: { draft: DevicePreferencesDraft; onChange: React.Dispatch<React.SetStateAction<DevicePreferencesDraft | null>>; onClose: () => void; onSave: () => void; onReset: () => void; disabled: boolean }) {
+  const folders = draft.foldersText.split('\n').map(folder => folder.trim()).filter(Boolean)
+  const toggleFormat = (format: string) => onChange(current => {
+    if (!current) return current
+    const formats = current.formats.includes(format) ? current.formats.filter(value => value !== format) : [...current.formats, format]
+    return { ...current, formats }
+  })
+  return <div className="confirm-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="confirm-dialog device-preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="device-preferences-title">
+      <h2 id="device-preferences-title">Transfer settings</h2>
+      <p>{draft.deviceName} · Settings are saved for this device.</p>
+      {draft.requiresExplicitSelection && <div className="device-profile-note">This device has no recognized profile. Choose where Attune should place books and which formats it can open before sending.</div>}
+      <label className="device-folder-field">Book folders <span>Relative to the device root. Put preferred folders first.</span><textarea rows={3} value={draft.foldersText} placeholder={'Books\nDocuments'} onChange={event => onChange(current => current ? { ...current, foldersText: event.target.value } : current)}/></label>
+      <fieldset className="device-format-field"><legend>Formats this device can open</legend><div className="device-format-options">{deviceFormatOptions.map(format => <label key={format}><input type="checkbox" checked={draft.formats.includes(format)} onChange={() => toggleFormat(format)}/><span>{format.toUpperCase()}</span></label>)}</div></fieldset>
+      <div className="confirm-actions device-preference-actions"><button className="quiet-button device-reset" onClick={onReset} disabled={disabled || !draft.customized}>Restore profile defaults</button><button className="toolbar-button" onClick={onClose}>Cancel</button><button className="toolbar-button primary-button" onClick={onSave} disabled={disabled || !folders.length || !draft.formats.length}>Save settings</button></div>
+    </section>
+  </div>
+}
+
+function Settings({ updates, onUpdates, textSize, setTextSize, state, onOpenFolder, onChangeLocation, onImportCalibre, changingLibrary, controlsDisabled }: { updates: UpdateState; onUpdates: () => void; textSize: TextSize; setTextSize: (size: TextSize) => void; state: AppState | null; onOpenFolder: () => void; onChangeLocation: () => void; onImportCalibre: () => void; changingLibrary: boolean; controlsDisabled: boolean }) {
+  const location = state?.libraryPath || 'Unavailable'
+  return <section className="settings-page"><div className="settings-heading"><div className="settings-icon"><Settings2 size={22}/></div><div><p>A few details about your library.</p></div></div><div className="settings-card text-size-card"><div><strong>Text size</strong><span>Adjust the size of labels and controls.</span></div><div className="text-size-options" role="group" aria-label="Text size">{(['small','medium','large'] as TextSize[]).map(size => <button key={size} className={textSize === size ? 'selected' : ''} aria-pressed={textSize === size} onClick={() => setTextSize(size)}>{size === 'medium' ? 'Default' : size[0].toUpperCase() + size.slice(1)}</button>)}</div></div><div className="settings-card"><div><strong>Library location</strong><span title={location}>{location}</span></div><div className="settings-actions"><button className="toolbar-button" onClick={onOpenFolder} disabled={controlsDisabled}><FolderOpen size={16}/> Open folder</button><button className="toolbar-button" onClick={onChangeLocation} disabled={controlsDisabled} aria-busy={changingLibrary}>{changingLibrary ? <><LoaderCircle size={16} className="spinning"/> Copying library…</> : <>Change…</>}</button></div></div><div className="settings-card calibre-import-card"><div><strong>Import Calibre library</strong><span>Copies books, metadata and covers into Attune. Your Calibre library stays unchanged.</span></div><button className="toolbar-button" onClick={onImportCalibre} disabled={controlsDisabled}>Choose library…</button></div><div className="settings-card"><div><strong>EPUB converter</strong><span>{state?.converterReady ? `Ready · ${state.converterVersion || 'installed'}` : 'Not available yet'}</span></div><span className={`converter-status ${state?.converterReady ? 'ready' : ''}`}>{state?.converterReady ? 'Ready' : 'Unavailable'}</span></div><UpdateSettingsCard state={updates} onOpen={onUpdates}/><div className="settings-note"><CircleHelp size={16}/><span>Attune creates an Attune Library folder in the location you choose. Your books and metadata are copied; the original folder is kept.</span></div></section>
+}
+
+function stageName(stage: string) { return ({ queued: 'Waiting in queue', converting: 'Preparing a compatible format', transferring: 'Copying to device', done: 'Saved to device', cancelled: 'Transfer cancelled', error: 'Check your device and try again' } as Record<string, string>)[stage] ?? 'Preparing transfer' }
 function message(e: unknown) { return e instanceof Error ? e.message : String(e || 'Something went wrong. Try again.') }

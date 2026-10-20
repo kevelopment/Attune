@@ -4,7 +4,7 @@
 
 Install mise and the native prerequisites from the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation). Mise selects Go 1.26.9 and Node.js 22.22.1. Run `mise trust` once if mise asks to trust `mise.toml`.
 
-On macOS, use macOS 13+ and the Xcode command-line tools. On Linux, install the GTK 3 and WebKit2GTK 4.1 development packages. On Windows, install the MinGW-w64 UCRT64 GCC toolchain and PowerShell 7. Linux device discovery also requires `lsblk`; eject needs `udisksctl` and working UDisks/polkit permissions. Windows device discovery uses PowerShell Storage CIM cmdlets and requires an external volume with a drive letter. Physical-device eject has not been validated on all platforms; see the [README](../README.md) for current support limits.
+On macOS, use macOS 13+, Xcode command-line tools, and `pkgconf` for the native MTP adapter. On Linux, install GTK 3, WebKit2GTK 4.1, libmtp, pkg-config, and a C compiler. On Windows, install the MinGW-w64 UCRT64 GCC toolchain, PowerShell 7, and Visual Studio's Desktop development with C++ workload plus Windows SDK for the WPD helper. Linux USB storage also requires `lsblk`; eject needs `udisksctl` and working UDisks/polkit permissions. Windows USB storage uses PowerShell Storage CIM cmdlets and requires an external volume with a drive letter. Physical-device behavior still needs hardware testing; see the [capability matrix](capability-matrix.md).
 
 ## Common tasks
 
@@ -43,7 +43,8 @@ The README screenshots are captured from this preview, not from someone's person
 | `app.go` | Wails bridge, import/edit/preview/transfer coordination |
 | `internal/library` | SQLite metadata and managed originals |
 | `internal/epub` | EPUB validation, metadata extraction, and sandboxed preview resources |
-| `internal/device` | Mounted-volume validation and verified transfers |
+| `internal/device` | USB/MTP transports, device profiles, and verified transfers |
+| `internal/formats` | Storage, reader, transfer, and conversion capability registry |
 | `internal/converter` | Kindling process and conversion cache |
 | `frontend/src` | React interface, styles, and native/preview bridge |
 | `frontend/public/attune-dark.svg`, `attune-light.svg` | Editable app icon sources for dark and light appearance |

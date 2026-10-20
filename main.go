@@ -30,6 +30,14 @@ func main() {
 		BackgroundColour: options.NewRGBA(0, 0, 0, 0),
 		AssetServer: &assetserver.Options{Assets: assets, Middleware: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/book-archives/") {
+					app.bookArchive(w, r)
+					return
+				}
+				if strings.HasPrefix(r.URL.Path, "/book-files/") {
+					app.bookFile(w, r)
+					return
+				}
 				if strings.HasPrefix(r.URL.Path, "/preview/") {
 					app.previewResource(w, r)
 					return

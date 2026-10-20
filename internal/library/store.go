@@ -57,7 +57,15 @@ func Open(root string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err = migrateDevicePreferences(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	s := &Store{root: abs, db: db}
+	if err = s.backfillBookFiles(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err = s.backfillSubjects(); err != nil {
 		db.Close()
 		return nil, err
@@ -99,6 +107,29 @@ func migrate(db *sql.DB) error {
 		position REAL NOT NULL,
 		created_at TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS book_files (
+		id TEXT PRIMARY KEY, book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		format TEXT NOT NULL, filename TEXT NOT NULL, relative_path TEXT NOT NULL,
+		sha256 TEXT NOT NULL UNIQUE, size INTEGER NOT NULL, preferred INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS book_files_book_format ON book_files(book_id, format, preferred DESC, created_at);
+	CREATE TABLE IF NOT EXISTS reader_locations (
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		asset_id TEXT NOT NULL REFERENCES book_files(id) ON DELETE CASCADE,
+		schema_version INTEGER NOT NULL,
+		locator_json TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY(book_id, asset_id)
+	);
+	CREATE TABLE IF NOT EXISTS calibre_sources (
+		library_uuid TEXT NOT NULL, book_uuid TEXT NOT NULL,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		raw_metadata_json TEXT NOT NULL DEFAULT '{}', custom_metadata_json TEXT NOT NULL DEFAULT '{}',
+		reading_state_json TEXT NOT NULL DEFAULT '{}', source_modified_at TEXT NOT NULL DEFAULT '',
+		imported_at TEXT NOT NULL,
+		PRIMARY KEY(library_uuid, book_uuid)
+	);
 	CREATE INDEX IF NOT EXISTS reader_bookmarks_book_created ON reader_bookmarks(book_id, created_at DESC);`)
 	if err != nil {
 		return err
@@ -110,6 +141,15 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err = ensureColumn(db, "books", "metadata_json", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return err
+	}
+	if err = ensureColumn(db, "books", "custom_metadata_json", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return err
+	}
+	if err = ensureColumn(db, "books", "source_metadata_json", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return err
+	}
+	if err = ensureColumn(db, "books", "reading_state_json", `TEXT NOT NULL DEFAULT '{}'`); err != nil {
 		return err
 	}
 	if err = ensureColumn(db, "books", "metadata_refreshed", `INTEGER NOT NULL DEFAULT 0`); err != nil {
@@ -229,6 +269,56 @@ func (s *Store) backfillMetadata() error {
 	return nil
 }
 
+// backfillBookFiles indexes the existing managed EPUBs in place. The migration
+// never renames or recopies user library files.
+func (s *Store) backfillBookFiles() error {
+	rows, err := s.db.Query(`SELECT b.id,b.original_path,b.sha256 FROM books b
+		WHERE b.original_path<>'' AND NOT EXISTS (SELECT 1 FROM book_files f WHERE f.book_id=b.id)`)
+	if err != nil {
+		return err
+	}
+	type legacyFile struct{ bookID, relativePath, hash string }
+	var pending []legacyFile
+	for rows.Next() {
+		var item legacyFile
+		if err = rows.Scan(&item.bookID, &item.relativePath, &item.hash); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, item)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range pending {
+		if !validBookID(item.bookID) || filepath.ToSlash(item.relativePath) != filepath.ToSlash(filepath.Join("books", item.bookID, "original.epub")) {
+			continue
+		}
+		path := filepath.Join(s.root, filepath.FromSlash(item.relativePath))
+		if err = validateManagedFile(s.root, item.bookID, path); err != nil {
+			continue
+		}
+		info, statErr := os.Stat(path)
+		if statErr != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		id, idErr := makeID()
+		if idErr != nil {
+			return idErr
+		}
+		_, err = s.db.Exec(`INSERT OR IGNORE INTO book_files(id,book_id,format,filename,relative_path,sha256,size,preferred,created_at)
+			VALUES(?,?,?,?,?,?,?,?,?)`, id, item.bookID, "epub", "original.epub", item.relativePath, item.hash, info.Size(), 1, info.ModTime().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type bookExtras struct {
 	Publisher   string            `json:"publisher,omitempty"`
 	Published   string            `json:"published,omitempty"`
@@ -339,18 +429,48 @@ func copyManagedTree(source, destination string) error {
 }
 
 func (s *Store) ListBooks() ([]model.Book, error) {
-	rows, err := s.db.Query(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id FROM books ORDER BY added_at DESC`)
+	books := []model.Book{}
+	byBook := make(map[string][]model.BookFile)
+	fileRows, err := s.db.Query(`SELECT id,book_id,format,filename,relative_path,sha256,size,preferred FROM book_files ORDER BY book_id,format,preferred DESC,created_at`)
+	if err != nil {
+		return nil, err
+	}
+	for fileRows.Next() {
+		var f model.BookFile
+		var preferred int
+		if err := fileRows.Scan(&f.ID, &f.BookID, &f.Format, &f.Filename, &f.RelativePath, &f.SHA256, &f.Size, &preferred); err != nil {
+			fileRows.Close()
+			return nil, err
+		}
+		f.Preferred = preferred != 0
+		applyFormatCapabilities(&f)
+		byBook[f.BookID] = append(byBook[f.BookID], f)
+	}
+	if err = fileRows.Err(); err != nil {
+		fileRows.Close()
+		return nil, err
+	}
+	if err = fileRows.Close(); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT id,title,authors,language,subjects,metadata_json,custom_metadata_json,sha256,added_at,revision,import_batch_id FROM books ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	books := []model.Book{}
 	for rows.Next() {
 		b, err := scanBook(rows)
 		if err != nil {
 			return nil, err
 		}
 		b.CoverURL = "/covers/" + b.ID
+		b.Files = append([]model.BookFile{}, byBook[b.ID]...)
+		for _, file := range b.Files {
+			if file.Preferred {
+				b.PreferredFileID = file.ID
+				break
+			}
+		}
 		s.populateFileStats(&b)
 		books = append(books, b)
 	}
@@ -501,6 +621,20 @@ func (s *Store) importEPUB(source, batchID string, importedMetadata *model.Book,
 		}
 		return model.Book{}, false, err
 	}
+	fileID, idErr := makeID()
+	if idErr != nil {
+		_, _ = s.db.Exec(`DELETE FROM books WHERE id=?`, id)
+		_ = os.RemoveAll(bookDir)
+		return model.Book{}, false, idErr
+	}
+	if _, err = s.db.Exec(`INSERT INTO book_files(id,book_id,format,filename,relative_path,sha256,size,preferred,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		fileID, id, "epub", filepath.Base(source), filepath.ToSlash(filepath.Join("books", id, "original.epub")), hash, fileSize(bookDir, "original.epub"), 1, b.AddedAt); err != nil {
+		_, _ = s.db.Exec(`DELETE FROM books WHERE id=?`, id)
+		_ = os.RemoveAll(bookDir)
+		return model.Book{}, false, err
+	}
+	b.Files = []model.BookFile{{ID: fileID, BookID: id, Format: "epub", Filename: filepath.Base(source), RelativePath: filepath.ToSlash(filepath.Join("books", id, "original.epub")), SHA256: hash, Size: fileSize(bookDir, "original.epub"), Preferred: true, CanRead: true, CanTransfer: true}}
+	b.PreferredFileID = fileID
 	committed = true
 	return b, false, nil
 }
@@ -705,8 +839,7 @@ func (s *Store) DeleteBook(id string) error {
 	if err != nil {
 		return err
 	}
-	expected := filepath.ToSlash(filepath.Join("books", id, "original.epub"))
-	if filepath.ToSlash(rel) != expected {
+	if rel != "" && !strings.HasPrefix(filepath.ToSlash(rel), filepath.ToSlash(filepath.Join("books", id))+"/") {
 		return errors.New("invalid managed source path")
 	}
 	booksRoot := filepath.Join(s.root, "books")
@@ -734,8 +867,8 @@ func (s *Store) BookSource(id string) (model.Book, string, error) {
 		return model.Book{}, "", ErrNotFound
 	}
 	var b model.Book
-	var rel, authors, subjects, extraJSON string
-	err := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id,original_path FROM books WHERE id=?`, id).Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &b.SHA256, &b.AddedAt, &b.Revision, &b.ImportBatchID, &rel)
+	var rel, authors, subjects, extraJSON, customJSON string
+	err := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,custom_metadata_json,sha256,added_at,revision,import_batch_id,original_path FROM books WHERE id=?`, id).Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &customJSON, &b.SHA256, &b.AddedAt, &b.Revision, &b.ImportBatchID, &rel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Book{}, "", ErrNotFound
 	}
@@ -748,19 +881,36 @@ func (s *Store) BookSource(id string) (model.Book, string, error) {
 	if err = json.Unmarshal([]byte(subjects), &b.Subjects); err != nil {
 		return model.Book{}, "", err
 	}
+	b.CustomMetadata = json.RawMessage(customJSON)
+	b.SHA256 = publicHash(b.SHA256)
 	var extras bookExtras
 	if err = json.Unmarshal([]byte(extraJSON), &extras); err != nil {
 		return model.Book{}, "", err
 	}
 	applyExtras(&b, extras)
 	b.CoverURL = "/covers/" + b.ID
-	expected := filepath.ToSlash(filepath.Join("books", id, "original.epub"))
-	if filepath.ToSlash(rel) != expected {
+	b.Files, err = s.BookFiles(id)
+	if err != nil {
+		return model.Book{}, "", err
+	}
+	for _, f := range b.Files {
+		if f.Preferred {
+			b.PreferredFileID = f.ID
+			break
+		}
+	}
+	file, p, err := s.BookFileSourceByFormat(id, "epub")
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return model.Book{}, "", errors.New("this book has no EPUB file")
+		}
+		return model.Book{}, "", err
+	}
+	if rel != "" && filepath.ToSlash(rel) != filepath.ToSlash(file.RelativePath) {
 		return model.Book{}, "", errors.New("invalid managed source path")
 	}
-	p := filepath.Join(s.root, filepath.FromSlash(rel))
-	if err = validateManagedFile(s.root, id, p); err != nil {
-		return model.Book{}, "", err
+	if !validBookFileRelative(id, file.RelativePath) {
+		return model.Book{}, "", errors.New("invalid managed source path")
 	}
 	s.populateFileStats(&b)
 	return b, p, nil
@@ -1066,23 +1216,32 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanBook(r rowScanner) (model.Book, error) {
 	var b model.Book
-	var authors, subjects, extraJSON string
-	err := r.Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &b.SHA256, &b.AddedAt, &b.Revision, &b.ImportBatchID)
+	var authors, subjects, extraJSON, customJSON string
+	err := r.Scan(&b.ID, &b.Title, &authors, &b.Language, &subjects, &extraJSON, &customJSON, &b.SHA256, &b.AddedAt, &b.Revision, &b.ImportBatchID)
 	if err != nil {
 		return b, err
 	}
+	b.SHA256 = publicHash(b.SHA256)
 	if err = json.Unmarshal([]byte(authors), &b.Authors); err != nil {
 		return b, err
 	}
 	if err = json.Unmarshal([]byte(subjects), &b.Subjects); err != nil {
 		return b, err
 	}
+	b.CustomMetadata = json.RawMessage(customJSON)
 	var extras bookExtras
 	if err = json.Unmarshal([]byte(extraJSON), &extras); err != nil {
 		return b, err
 	}
 	applyExtras(&b, extras)
 	return b, nil
+}
+
+func publicHash(hash string) string {
+	if strings.HasPrefix(hash, "metadata:") {
+		return ""
+	}
+	return hash
 }
 
 func applyExtras(b *model.Book, x bookExtras) {
@@ -1101,19 +1260,35 @@ func (s *Store) populateFileStats(b *model.Book) {
 	if !validBookID(b.ID) {
 		return
 	}
-	p := filepath.Join(s.root, "books", b.ID, "original.epub")
+	var rel string
+	if b.Files != nil {
+		for _, file := range b.Files {
+			if file.Preferred {
+				rel = file.RelativePath
+				break
+			}
+		}
+		if rel == "" && len(b.Files) > 0 {
+			rel = b.Files[0].RelativePath
+		}
+	} else {
+		_ = s.db.QueryRow(`SELECT relative_path FROM book_files WHERE book_id=? ORDER BY preferred DESC,CASE format WHEN 'epub' THEN 0 ELSE 1 END,created_at LIMIT 1`, b.ID).Scan(&rel)
+	}
+	if rel == "" {
+		rel = filepath.ToSlash(filepath.Join("books", b.ID, "original.epub"))
+	}
+	p := filepath.Join(s.root, filepath.FromSlash(rel))
 	if validateManagedFile(s.root, b.ID, p) != nil {
 		return
 	}
 	st, err := os.Stat(p)
-	if err != nil {
-		return
+	if err == nil {
+		b.FileSize = st.Size()
+		b.ModifiedAt = st.ModTime().UTC().Format(time.RFC3339Nano)
 	}
-	b.FileSize = st.Size()
-	b.ModifiedAt = st.ModTime().UTC().Format(time.RFC3339Nano)
 }
 func (s *Store) get(id string) (model.Book, error) {
-	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id FROM books WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,custom_metadata_json,sha256,added_at,revision,import_batch_id FROM books WHERE id=?`, id)
 	b, err := scanBook(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, ErrNotFound
@@ -1123,7 +1298,7 @@ func (s *Store) get(id string) (model.Book, error) {
 	return b, err
 }
 func (s *Store) getByHash(hash string) (model.Book, error) {
-	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,sha256,added_at,revision,import_batch_id FROM books WHERE sha256=?`, hash)
+	row := s.db.QueryRow(`SELECT id,title,authors,language,subjects,metadata_json,custom_metadata_json,sha256,added_at,revision,import_batch_id FROM books WHERE sha256=?`, hash)
 	b, err := scanBook(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, sql.ErrNoRows

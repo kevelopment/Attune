@@ -29,7 +29,11 @@ jobs:
         if: matrix.runner == 'ubuntu-24.04'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libmtp-dev
+
+      - name: Install macOS MTP build dependencies
+        if: startsWith(matrix.runner, 'macos-')
+        run: brew install pkgconf
 
       - name: Install Windows C compiler
         if: matrix.runner == 'windows-2025'
@@ -49,6 +53,11 @@ jobs:
           $mingw = Join-Path $env:MSYS2_LOCATION 'ucrt64/bin'
           if (!(Test-Path (Join-Path $mingw 'gcc.exe'))) { throw "MinGW GCC was not found at $mingw" }
           Add-Content $env:GITHUB_PATH $mingw
+
+      - name: Compile Windows Portable Devices helper
+        if: matrix.runner == 'windows-2025'
+        shell: pwsh
+        run: ./scripts/build-wpd-helper.ps1
 
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
@@ -88,6 +97,19 @@ jobs:
       - name: Test
         run: mise run test
 
+      - name: Compile Unix MTP bindings
+        if: matrix.runner != 'windows-2025'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            mtp_arch="$(go env GOARCH)"
+            [ "$mtp_arch" != amd64 ] || mtp_arch=x86_64
+            scripts/build-macos-mtp.sh "$mtp_arch"
+            export PKG_CONFIG_PATH="$PWD/.cache/macos-mtp/$mtp_arch/lib/pkgconfig"
+          fi
+          go test -run '^$' -tags libmtp ./internal/device
+
   test:
     name: test
     if: always()
@@ -107,7 +129,7 @@ jobs:
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install --yes build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libmtp-dev
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
       - name: Locate Go caches
         id: go-cache

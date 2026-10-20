@@ -18,7 +18,12 @@ fi
 if [ ! -x "$GOBIN/wails" ]; then
   go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 fi
-wails build -clean -ldflags "-X attune/internal/app.appVersion=$ATTUNE_VERSION -X attune/internal/app.updateEnabled=true"
+MTP_ARCH=$ARCH
+[ "$MTP_ARCH" != amd64 ] || MTP_ARCH=x86_64
+MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$MTP_ARCH}
+scripts/build-macos-mtp.sh "$MTP_ARCH"
+export PKG_CONFIG_PATH="$MTP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+wails build -clean -tags libmtp -ldflags "-X attune/internal/app.appVersion=$ATTUNE_VERSION -X attune/internal/app.updateEnabled=true"
 APP="build/bin/Attune.app"
 mkdir -p "$APP/Contents/Resources/licenses"
 cp "third_party/kindling/darwin-$ARCH/kindling-cli" "$APP/Contents/Resources/kindling-cli"
@@ -26,6 +31,7 @@ cp LICENSE "$APP/Contents/Resources/licenses/Attune-LICENSE.txt"
 cp THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt "$APP/Contents/Resources/licenses/"
 cp third_party/kindling/LICENSE "$APP/Contents/Resources/licenses/Kindling-LICENSE.txt"
 cp third_party/kindling/THIRD_PARTY_LICENSES.txt "$APP/Contents/Resources/licenses/Kindling-THIRD_PARTY_LICENSES.txt"
+scripts/bundle-macos-mtp.sh "$APP" "$MTP_PREFIX"
 /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 13.0" "$APP/Contents/Info.plist"
 # Local distribution only. Developer ID signing/notarization is a separate release step.
 codesign --force --sign - "$APP/Contents/Resources/kindling-cli"

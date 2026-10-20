@@ -22,13 +22,20 @@ type appBindings interface {
 	UpdateBookMetadata(string, model.BookMetadataEdit) (model.Book, error)
 	ChangeBookCover(string) (model.Book, error)
 	GetBookPreview(string) (model.BookPreview, error)
+	OpenBookFile(string, string) error
+	AttachBookFiles(string) (model.ImportResult, error)
 	GetReadingProgress(string) (model.ReadingProgress, error)
 	SaveReadingProgress(string, int, float64) error
+	GetReaderLocation(string, string) (backend.ReaderLocation, error)
+	SaveReaderLocation(string, string, int, string) error
 	GetReadingBookmarks(string) ([]model.ReadingBookmark, error)
 	AddReadingBookmark(string, int, float64) (model.ReadingBookmark, error)
 	DeleteReadingBookmark(string, int64) error
 	DeleteBook(string) error
 	SelectDevice() (model.Device, error)
+	GetDevicePreferences(string) (backend.DevicePreferences, error)
+	SaveDevicePreferences(string, []string, []string) error
+	ResetDevicePreferences(string) error
 	GetDeviceBooks(string) ([]model.DeviceBook, error)
 	SendBooks(string, []string) error
 	CancelTransfer()
@@ -80,6 +87,14 @@ func (a *App) covers(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) previewResource(w http.ResponseWriter, r *http.Request) {
 	a.core.ServePreviewResource(w, r)
+}
+
+func (a *App) bookFile(w http.ResponseWriter, r *http.Request) {
+	a.core.ServeBookFile(w, r)
+}
+
+func (a *App) bookArchive(w http.ResponseWriter, r *http.Request) {
+	a.core.ServeBookArchive(w, r)
 }
 
 func mapUpdateState(state backend.UpdateState) UpdateState {

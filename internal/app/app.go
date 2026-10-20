@@ -23,6 +23,7 @@ import (
 	"attune/internal/converter"
 	"attune/internal/device"
 	"attune/internal/epub"
+	"attune/internal/formats"
 	"attune/internal/library"
 	"attune/internal/model"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -115,10 +116,46 @@ func (a *App) Startup(ctx context.Context) {
 		return
 	}
 	a.manager = device.NewManager()
+	a.startTransportDiscovery(ctx)
 	a.converter = converter.New(converterPath())
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	a.converterVersion, a.converterErr = a.converter.Version(checkCtx)
+}
+
+func (a *App) startTransportDiscovery(ctx context.Context) {
+	refresher, ok := a.manager.(interface {
+		RefreshTransports(context.Context) (bool, error)
+	})
+	if !ok {
+		return
+	}
+	go func() {
+		refresh := func() {
+			refreshCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			changed, err := refresher.RefreshTransports(refreshCtx)
+			cancel()
+			if changed {
+				a.event("devices:changed")
+			}
+			if err != nil && ctx.Err() == nil {
+				// Discovery errors are surfaced when a user opens or refreshes a
+				// device; startup stays responsive while readers are busy.
+				return
+			}
+		}
+		refresh()
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refresh()
+			}
+		}
+	}()
 }
 
 func converterPath() string {
@@ -238,10 +275,22 @@ func (a *App) GetState() (model.AppState, error) {
 			delete(a.selected, d.ID)
 		}
 	}
-	for _, d := range devices {
+	for i := range devices {
+		d := devices[i]
 		if err := a.store.RecordDevice(d); err != nil {
 			return model.AppState{}, err
 		}
+		if folders, formats, found, err := a.store.LoadDevicePreferences(d.ID); err != nil {
+			return model.AppState{}, fmt.Errorf("load preferences for %s: %w", d.Name, err)
+		} else if found {
+			d.BookFolders = folders
+			d.TransferFormats = formats
+			if d.ProfileID == "generic" {
+				d.RequiresExplicitSelection = len(folders) == 0 || len(formats) == 0
+			}
+		}
+		// Operations receive the effective settings from this AppState value.
+		devices[i] = d
 	}
 	if books == nil {
 		books = []model.Book{}
@@ -250,14 +299,14 @@ func (a *App) GetState() (model.AppState, error) {
 }
 
 func (a *App) ImportBooks() (model.ImportResult, error) {
-	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Import EPUB books", Filters: []wruntime.FileFilter{{DisplayName: "EPUB books", Pattern: "*.epub"}}})
+	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Import books", Filters: []wruntime.FileFilter{{DisplayName: "Supported ebooks", Pattern: "*.epub;*.pdf;*.mobi;*.azw;*.azw3;*.prc;*.fb2;*.txt;*.cbz;*.cbr;*.rtf;*.doc;*.docx;*.odt;*.html;*.htmlz;*.pdb;*.lit;*.zip"}}})
 	if err != nil {
 		return model.ImportResult{}, err
 	}
 	return a.ImportPaths(paths)
 }
 
-// ImportCalibreLibrary copies EPUBs and their metadata from a Calibre library.
+// ImportCalibreLibrary copies Calibre format files, metadata and reading state.
 func (a *App) ImportCalibreLibrary() (model.ImportResult, error) {
 	if err := a.ready(); err != nil {
 		return model.ImportResult{BookIDs: []string{}, Errors: []string{}}, err
@@ -308,37 +357,23 @@ func (a *App) importCalibreLibrary(root string) (model.ImportResult, error) {
 		}
 		filename := name
 		emit(model.ImportProgress{Current: i, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Skipped: result.Skipped, Stage: "importing"})
-		if item.Issue != "" {
-			result.Errors = append(result.Errors, filename+": "+item.Issue)
+		bookID, duplicate, itemErrors, importErr := a.importCalibreRecord(root, item, batchID)
+		if importErr != nil {
+			result.Errors = append(result.Errors, filename+": "+importErr.Error())
 			failed++
-		} else if item.EPUBPath == "" {
-			result.Skipped++
 		} else {
-			var cover []byte
-			coverErr := error(nil)
-			if item.CoverPath != "" {
-				cover, coverErr = readCalibreCover(item.CoverPath)
-				if coverErr != nil {
-					result.Errors = append(result.Errors, filename+" cover: "+coverErr.Error())
-					failed++
-				}
+			for _, itemErr := range itemErrors {
+				result.Errors = append(result.Errors, filename+": "+itemErr)
+				failed++
 			}
-			if coverErr == nil {
-				book, duplicate, importErr := a.store.ImportCalibreBook(item.EPUBPath, item.Metadata, cover, batchID)
-				if importErr != nil {
-					result.Errors = append(result.Errors, filename+": "+importErr.Error())
-					failed++
-				} else {
-					if _, seen := seenBookIDs[book.ID]; !seen {
-						result.BookIDs = append(result.BookIDs, book.ID)
-						seenBookIDs[book.ID] = struct{}{}
-					}
-					if duplicate {
-						result.Duplicates++
-					} else {
-						result.Imported++
-					}
-				}
+			if _, seen := seenBookIDs[bookID]; !seen {
+				result.BookIDs = append(result.BookIDs, bookID)
+				seenBookIDs[bookID] = struct{}{}
+			}
+			if duplicate {
+				result.Duplicates++
+			} else {
+				result.Imported++
 			}
 		}
 		emit(model.ImportProgress{Current: i + 1, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Skipped: result.Skipped, Stage: "importing"})
@@ -346,6 +381,114 @@ func (a *App) importCalibreLibrary(root string) (model.ImportResult, error) {
 	emit(model.ImportProgress{Current: total, Total: total, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Skipped: result.Skipped, Stage: "done"})
 	a.event("library:changed")
 	return result, nil
+}
+
+func (a *App) importCalibreRecord(root string, item calibre.Book, batchID string) (string, bool, []string, error) {
+	issues := make([]string, 0)
+	libraryUUID := strings.TrimSpace(item.LibraryUUID)
+	if libraryUUID == "" {
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			return "", false, issues, err
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err == nil {
+			abs = resolved
+		}
+		sum := sha256.Sum256([]byte(filepath.Clean(abs)))
+		libraryUUID = "path:" + hex.EncodeToString(sum[:])
+	}
+	bookUUID := strings.TrimSpace(item.UUID)
+	if bookUUID == "" {
+		bookUUID = "record:" + item.ID
+	}
+	bookID, mapped, err := a.store.CalibreBookID(libraryUUID, bookUUID)
+	if err != nil {
+		return "", false, issues, err
+	}
+	duplicate := mapped
+	if !mapped {
+		matches := make(map[string]bool)
+		for _, asset := range item.Assets {
+			if asset.Path == "" || asset.Issue != "" {
+				continue
+			}
+			hash, hashErr := fileHash(asset.Path)
+			if hashErr != nil {
+				continue
+			}
+			file, found, lookupErr := a.store.FileByHash(hash)
+			if lookupErr != nil {
+				return "", false, issues, lookupErr
+			}
+			if found {
+				matches[file.BookID] = true
+			}
+		}
+		if len(matches) == 1 {
+			for id := range matches {
+				bookID = id
+			}
+			duplicate = true
+		} else if len(matches) > 1 {
+			issues = append(issues, "format files match multiple existing books; conflicting assets were preserved as far as possible")
+		}
+	}
+	if bookID == "" {
+		var cover []byte
+		if item.CoverPath != "" {
+			cover, err = readCalibreCover(item.CoverPath)
+			if err != nil {
+				issues = append(issues, "cover: "+err.Error())
+				cover = nil
+			}
+		}
+		book, createErr := a.store.CreateCalibreBook(item.Metadata, item.CustomValues, item.RawMetadata, item.ReadingState, cover, batchID)
+		if createErr != nil {
+			return "", false, issues, createErr
+		}
+		bookID = book.ID
+	}
+	for _, asset := range item.Assets {
+		if asset.Path == "" {
+			if asset.Issue != "" {
+				issues = append(issues, strings.ToLower(asset.Format)+": "+asset.Issue)
+			}
+			continue
+		}
+		file, alreadyPresent, attachErr := a.store.AttachBookFile(bookID, asset.Path, false)
+		if attachErr != nil {
+			issues = append(issues, strings.ToLower(asset.Format)+": "+attachErr.Error())
+			continue
+		}
+		if alreadyPresent && file.BookID != bookID {
+			issues = append(issues, strings.ToLower(asset.Format)+": identical content is already attached to another Attune book")
+		}
+	}
+	if len(item.Assets) == 0 && item.Issue != "" {
+		issues = append(issues, item.Issue)
+	}
+	if err = a.store.LinkCalibreSource(libraryUUID, bookUUID, bookID, item.RawMetadata, item.CustomValues, item.ReadingState, item.Metadata.ModifiedAt); err != nil {
+		return "", duplicate, issues, err
+	}
+	parsedAnnotations, parseErr := calibre.ParseAnnotations(item.ReadingState)
+	if parseErr != nil {
+		issues = append(issues, "reading annotations: "+parseErr.Error())
+	} else {
+		annotations := make([]library.CalibreAnnotation, 0, len(parsedAnnotations))
+		for _, annotation := range parsedAnnotations {
+			annotations = append(annotations, library.CalibreAnnotation{
+				SourceID: annotation.SourceID, Format: annotation.Format, Kind: annotation.Kind, Text: annotation.Text,
+				Note: annotation.Note, Quote: annotation.Quote, CFI: annotation.CFI,
+				Timestamp: annotation.Timestamp, Progress: annotation.Progress, Status: annotation.Status,
+			})
+		}
+		sourceIdentity := libraryUUID + ":" + bookUUID
+		if importErr := a.store.ImportCalibreAnnotations(bookID, sourceIdentity, annotations); importErr != nil {
+			return "", duplicate, issues, importErr
+		}
+	}
+	return bookID, duplicate, issues, nil
 }
 
 func readCalibreCover(path string) ([]byte, error) {
@@ -417,7 +560,7 @@ func (a *App) ImportPaths(paths []string) (model.ImportResult, error) {
 	for i, p := range paths {
 		filename := filepath.Base(p)
 		emitProgress(model.ImportProgress{Current: i, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Stage: "importing"})
-		book, duplicate, err := a.store.ImportEPUBInBatch(p, batchID)
+		book, duplicate, err := a.store.ImportFileInBatch(p, batchID)
 		if err != nil {
 			result.Errors = append(result.Errors, filepath.Base(p)+": "+err.Error())
 			failed++
@@ -669,7 +812,7 @@ func (a *App) SelectDevice() (model.Device, error) {
 	case "windows":
 		defaultDirectory = `C:\`
 	}
-	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose the mounted Kindle volume", DefaultDirectory: defaultDirectory})
+	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose mounted reader storage", DefaultDirectory: defaultDirectory})
 	if err != nil {
 		return model.Device{}, err
 	}
@@ -688,6 +831,15 @@ func (a *App) SelectDevice() (model.Device, error) {
 	if err = a.store.RecordDevice(d); err != nil {
 		return d, err
 	}
+	if folders, formats, found, prefErr := a.store.LoadDevicePreferences(d.ID); prefErr != nil {
+		return d, prefErr
+	} else if found {
+		d.BookFolders = folders
+		d.TransferFormats = formats
+		if d.ProfileID == "generic" {
+			d.RequiresExplicitSelection = len(folders) == 0 || len(formats) == 0
+		}
+	}
 	a.selected[d.ID] = d
 	a.event("devices:changed")
 	return d, nil
@@ -703,7 +855,7 @@ func (a *App) findDevice(id string) (model.Device, error) {
 			return d, nil
 		}
 	}
-	return model.Device{}, errors.New("Kindle disconnected; reconnect it and try again")
+	return model.Device{}, errors.New("reader disconnected; reconnect it and try again")
 }
 
 func (a *App) GetDeviceBooks(id string) ([]model.DeviceBook, error) {
@@ -729,6 +881,12 @@ func (a *App) GetDeviceBooks(id string) ([]model.DeviceBook, error) {
 			for _, book := range libraryBooks {
 				if strings.Contains(books[i].Name, "-"+book.ID+"-") {
 					books[i].BookID = book.ID
+					for _, file := range book.Files {
+						if formats.CanRead(file.Format) {
+							books[i].CanRead = true
+							break
+						}
+					}
 					if books[i].Title == "" {
 						books[i].Title = book.Title
 					}
@@ -802,15 +960,15 @@ func (a *App) SendBooks(deviceID string, ids []string) error {
 	if err := a.ready(); err != nil {
 		return err
 	}
-	if a.converterErr != nil {
-		return fmt.Errorf("Kindling unavailable: %w", a.converterErr)
-	}
 	if len(ids) == 0 {
 		return errors.New("select at least one book")
 	}
 	d, err := a.findDevice(deviceID)
 	if err != nil {
 		return err
+	}
+	if d.RequiresExplicitSelection {
+		return errors.New("choose a book folder and supported formats in reader settings before sending books to this unrecognized device")
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -824,7 +982,7 @@ func (a *App) SendBooks(deviceID string, ids []string) error {
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if !seen[id] {
-			if _, _, err := a.store.BookSource(id); err != nil {
+			if _, err := a.store.GetBook(id); err != nil {
 				return err
 			}
 			unique = append(unique, id)
@@ -846,7 +1004,7 @@ func (a *App) SendBooks(deviceID string, ids []string) error {
 
 func (a *App) send(ctx context.Context, d model.Device, ids []string) {
 	for i, id := range ids {
-		b, _, err := a.store.BookSource(id)
+		b, err := a.store.GetBook(id)
 		p := model.Progress{ID: d.ID, BookID: id, Title: b.Title, Current: i + 1, Total: len(ids)}
 		progress := func(stage, message string) { p.Stage = stage; p.Message = message; a.event("transfer:progress", p) }
 		fail := func(err error) {
@@ -864,106 +1022,69 @@ func (a *App) send(ctx context.Context, d model.Device, ids []string) {
 			fail(err)
 			return
 		}
-		key := cacheKey(b, a.converterVersion)
-		cached, err := a.store.GetConversion(key)
+		asset, source, err := transferAsset(a.store, b, d.TransferFormats)
+		converted := false
+		if err != nil && d.AllowEPUBToMOBI {
+			asset, source, err = a.convertForKindle(ctx, b, progress)
+			converted = err == nil
+		}
 		if err != nil {
 			fail(err)
 			return
 		}
-		expectedCache := filepath.Join(a.root, "conversions", key+".mobi")
-		if cached != expectedCache {
-			cached = ""
+		if err = ctx.Err(); err != nil {
+			fail(err)
+			return
 		}
-		if cached != "" {
-			if st, e := os.Lstat(cached); e != nil || !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 || st.Size() == 0 {
-				cached = ""
-			}
+		// Conversion assets are content-addressed and cached separately; existing
+		// compatible files are transferred directly without changing the original.
+		digest := asset.SHA256
+		if converted {
+			digest, err = fileHash(source)
 		}
-		if cached == "" {
-			progress("converting", "Converting for Kindle 1 / 2")
-			dir := filepath.Join(a.root, "conversions")
-			if err = os.MkdirAll(dir, 0700); err != nil {
+		if err != nil {
+			fail(err)
+			return
+		}
+		key := ""
+		if converted {
+			key = cacheKey(b, a.converterVersion)
+		} else {
+			keyBytes := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", digest, b.Revision, d.ProfileID, asset.Format)))
+			key = hex.EncodeToString(keyBytes[:])
+		}
+		filename := sanitizeDeviceTitle(b.Title) + "-" + b.ID + "-" + key[:12] + "." + asset.Format
+		if relative, exists, findErr := a.findExistingTransfer(d, filename, digest, key); findErr != nil {
+			fail(findErr)
+			return
+		} else if exists {
+			if err = a.store.RecordTransfer(d.ID, b.ID, relative, key); err != nil {
 				fail(err)
 				return
 			}
-			output := filepath.Join(dir, key+".mobi")
-			// A previous run may have published the validated converter output and
-			// stopped before recording it in SQLite. Clear that managed orphan so
-			// the converter can safely rebuild it on this run.
-			if st, e := os.Lstat(output); e == nil {
-				if !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 {
-					fail(errors.New("conversion cache path is not a regular file"))
+			progress("done", "Already on device")
+			continue
+		}
+		transferMessage := "Copying and verifying"
+		if d.Transport != "" && d.Transport != "usb-storage" {
+			transferMessage = "Copying; checking device-reported size"
+		}
+		progress("transferring", transferMessage)
+		var relative string
+		if sender, ok := a.manager.(interface {
+			SendWithProgress(context.Context, model.Device, string, string, device.ProgressFunc) (string, error)
+		}); ok {
+			var lastReported uint64
+			relative, err = sender.SendWithProgress(ctx, d, source, filename, func(done, total uint64) {
+				if done != total && done-lastReported < 1<<20 {
 					return
 				}
-				if e = os.Remove(output); e != nil {
-					fail(e)
-					return
-				}
-			} else if !os.IsNotExist(e) {
-				fail(e)
-				return
-			}
-			conversionSource, createErr := os.CreateTemp(dir, "."+key+"-*.epub")
-			if createErr != nil {
-				fail(createErr)
-				return
-			}
-			conversionSourcePath := conversionSource.Name()
-			if createErr = conversionSource.Close(); createErr == nil {
-				createErr = a.store.ExportEPUB(id, conversionSourcePath)
-			}
-			if createErr != nil {
-				_ = os.Remove(conversionSourcePath)
-				fail(createErr)
-				return
-			}
-			convertErr := a.converter.Convert(ctx, conversionSourcePath, output, b.Title, b.Authors)
-			_ = os.Remove(conversionSourcePath)
-			if convertErr != nil {
-				fail(convertErr)
-				return
-			}
-			if err = a.store.SaveConversion(b.ID, key, output); err != nil {
-				fail(err)
-				return
-			}
-			cached = output
+				lastReported = done
+				progress("transferring", fmt.Sprintf("Copied %s of %s", humanBytes(done), humanBytes(total)))
+			})
+		} else {
+			relative, err = a.manager.Send(ctx, d, source, filename)
 		}
-		// A content hash in the filename distinguishes editions without replacing any existing book.
-		digest, err := fileHash(cached)
-		if err != nil {
-			fail(err)
-			return
-		}
-		filename := sanitizeDeviceTitle(b.Title) + "-" + b.ID + "-" + key[:12] + ".mobi"
-		relative := filepath.Join("documents", filename)
-		prior, err := a.store.TransferKey(d.ID, relative)
-		if err != nil {
-			fail(err)
-			return
-		}
-		target := filepath.Join(d.Root, relative)
-		if st, e := os.Lstat(target); e == nil {
-			if st.Mode().IsRegular() && st.Mode()&os.ModeSymlink == 0 {
-				if actual, hashErr := fileHash(target); hashErr == nil && actual == digest {
-					// Recover a transfer completed just before a crash prevented its
-					// device_books record from being written.
-					if prior != key {
-						if err = a.store.RecordTransfer(d.ID, b.ID, relative, key); err != nil {
-							fail(err)
-							return
-						}
-					}
-					progress("done", "Already on Kindle")
-					continue
-				}
-			}
-		} else if !os.IsNotExist(e) {
-			fail(e)
-			return
-		}
-		progress("transferring", "Copying and verifying")
-		relative, err = a.manager.Send(ctx, d, cached, filename)
 		if err != nil {
 			fail(err)
 			return
@@ -972,8 +1093,157 @@ func (a *App) send(ctx context.Context, d model.Device, ids []string) {
 			fail(err)
 			return
 		}
-		progress("done", "Sent to Kindle")
+		progress("done", "Sent to device")
 	}
+}
+
+func humanBytes(value uint64) string {
+	if value < 1<<20 {
+		return fmt.Sprintf("%.0f KB", float64(value)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(value)/(1<<20))
+}
+
+func transferAsset(store *library.Store, book model.Book, preferredFormats []string) (model.BookFile, string, error) {
+	formats := preferredFormats
+	if len(formats) == 0 {
+		formats = []string{"epub", "pdf", "azw3", "mobi", "prc", "fb2", "txt", "cbz", "cbr", "rtf", "doc", "docx", "odt", "html", "htmlz", "pdb", "lit", "zip"}
+	}
+	for _, format := range formats {
+		for _, file := range book.Files {
+			if strings.EqualFold(file.Format, format) {
+				resolved, path, err := store.BookFileSource(book.ID, file.ID)
+				if err != nil {
+					return model.BookFile{}, "", err
+				}
+				return resolved, path, nil
+			}
+		}
+	}
+	if book.PreferredFileID == "" && len(book.Files) == 0 {
+		return model.BookFile{}, "", fmt.Errorf("%q has no imported book files", book.Title)
+	}
+	return model.BookFile{}, "", fmt.Errorf("%q has no file compatible with this device; add one of the supported formats: %s", book.Title, strings.Join(formats, ", "))
+}
+
+func (a *App) convertForKindle(ctx context.Context, book model.Book, progress func(string, string)) (model.BookFile, string, error) {
+	if a.converterErr != nil {
+		return model.BookFile{}, "", fmt.Errorf("this Kindle accepts AZW3/MOBI/PRC, but only EPUB is available and the converter is unavailable: %w", a.converterErr)
+	}
+	var epubFile model.BookFile
+	for _, file := range book.Files {
+		if strings.EqualFold(file.Format, "epub") {
+			epubFile = file
+			break
+		}
+	}
+	if epubFile.ID == "" {
+		return model.BookFile{}, "", fmt.Errorf("this Kindle accepts AZW3/MOBI/PRC; add one of those formats or an EPUB to convert")
+	}
+	key := cacheKey(book, a.converterVersion)
+	cached, err := a.store.GetConversion(key)
+	if err != nil {
+		return model.BookFile{}, "", err
+	}
+	expected := filepath.Join(a.root, "conversions", key+".mobi")
+	if cached == expected {
+		if st, statErr := os.Lstat(cached); statErr == nil && st.Mode().IsRegular() && st.Mode()&os.ModeSymlink == 0 && st.Size() > 0 {
+			digest, hashErr := fileHash(cached)
+			if hashErr != nil {
+				return model.BookFile{}, "", hashErr
+			}
+			return model.BookFile{Format: "mobi", SHA256: digest}, cached, nil
+		}
+	}
+	progress("converting", "Converting EPUB for Kindle")
+	dir := filepath.Join(a.root, "conversions")
+	if err = os.MkdirAll(dir, 0o700); err != nil {
+		return model.BookFile{}, "", err
+	}
+	output := expected
+	if st, statErr := os.Lstat(output); statErr == nil {
+		if !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 {
+			return model.BookFile{}, "", errors.New("conversion cache path is not a regular file")
+		}
+		if err = os.Remove(output); err != nil {
+			return model.BookFile{}, "", err
+		}
+	} else if !os.IsNotExist(statErr) {
+		return model.BookFile{}, "", statErr
+	}
+	_, epubPath, err := a.store.BookFileSource(book.ID, epubFile.ID)
+	if err != nil {
+		return model.BookFile{}, "", err
+	}
+	if err = a.converter.Convert(ctx, epubPath, output, book.Title, book.Authors); err != nil {
+		return model.BookFile{}, "", err
+	}
+	if err = a.store.SaveConversion(book.ID, key, output); err != nil {
+		return model.BookFile{}, "", err
+	}
+	digest, err := fileHash(output)
+	return model.BookFile{Format: "mobi", SHA256: digest}, output, err
+}
+
+func (a *App) findExistingTransfer(d model.Device, filename, digest, transferKey string) (string, bool, error) {
+	if d.Transport != "" && d.Transport != "usb-storage" {
+		books, err := a.manager.List(d)
+		if err != nil {
+			return "", false, err
+		}
+		for _, book := range books {
+			if book.Name != filename {
+				continue
+			}
+			recordedKey, err := a.store.TransferKey(d.ID, book.Path)
+			if err != nil {
+				return "", false, err
+			}
+			if recordedKey == transferKey {
+				return book.Path, true, nil
+			}
+			return "", false, fmt.Errorf("a different device file already uses %q; remove it before retrying", filename)
+		}
+		return "", false, nil
+	}
+	for _, folder := range d.BookFolders {
+		p := filepath.Join(d.Root, folder, filename)
+		st, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		actual, err := fileHash(p)
+		if err != nil {
+			return "", false, err
+		}
+		if actual == digest {
+			return filepath.ToSlash(filepath.Join(folder, filename)), true, nil
+		}
+	}
+	books, err := a.manager.List(d)
+	if err != nil {
+		return "", false, err
+	}
+	for _, book := range books {
+		if book.Name != filename {
+			continue
+		}
+		path := filepath.Join(d.Root, filepath.FromSlash(book.Path))
+		actual, hashErr := fileHash(path)
+		if hashErr != nil {
+			return "", false, hashErr
+		}
+		if actual == digest {
+			return book.Path, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func sanitizeDeviceTitle(title string) string {

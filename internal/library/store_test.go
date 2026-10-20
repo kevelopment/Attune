@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
@@ -288,6 +289,98 @@ func TestImportCalibreBookRejectsInvalidCover(t *testing.T) {
 	}
 }
 
+func TestMultiFormatAssetsDeduplicateAndKeepVariants(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	first := filepath.Join(t.TempDir(), "Manual.pdf")
+	if err = os.WriteFile(first, []byte("pdf edition one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	book, duplicate, err := s.ImportFileInBatch(first, "batch-1")
+	if err != nil || duplicate {
+		t.Fatalf("ImportFileInBatch = duplicate %v, err %v", duplicate, err)
+	}
+	if len(book.Files) != 1 || book.Files[0].Format != "pdf" || !book.Files[0].CanRead || !book.Files[0].CanTransfer {
+		t.Fatalf("PDF asset not indexed: %#v", book.Files)
+	}
+	_, stored, err := s.BookFileSourceByFormat(book.ID, "PDF")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, e := os.ReadFile(stored); e != nil || string(data) != "pdf edition one" {
+		t.Fatalf("asset copy = %q, %v", data, e)
+	}
+	second := filepath.Join(t.TempDir(), "Manual revised.pdf")
+	if err = os.WriteFile(second, []byte("pdf edition two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	variant, duplicate, err := s.AttachBookFile(book.ID, second, false)
+	if err != nil || duplicate {
+		t.Fatalf("AttachBookFile = duplicate %v, err %v", duplicate, err)
+	}
+	files, err := s.BookFiles(book.ID)
+	if err != nil || len(files) != 2 {
+		t.Fatalf("BookFiles = %#v, %v", files, err)
+	}
+	preferred := 0
+	for _, file := range files {
+		if file.Preferred {
+			preferred++
+			if file.ID != book.Files[0].ID {
+				t.Fatalf("unexpected preferred file: %#v", file)
+			}
+		}
+	}
+	if preferred != 1 || variant.Preferred {
+		t.Fatalf("variant preference state wrong: %#v", files)
+	}
+	duplicatePath := filepath.Join(t.TempDir(), "copy.pdf")
+	if err = os.WriteFile(duplicatePath, []byte("pdf edition one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	duplicateBook, duplicate, err := s.ImportFileInBatch(duplicatePath, "batch-2")
+	if err != nil || !duplicate || duplicateBook.ID != book.ID {
+		t.Fatalf("same content not deduplicated: %#v, duplicate=%v, err=%v", duplicateBook, duplicate, err)
+	}
+}
+
+func TestCreateCalibreBookPreservesSourcePayloadAndMapping(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	book, err := s.CreateCalibreBook(model.Book{Title: "Metadata only", Authors: []string{"Reader"}}, []byte(`{"rating":5}`), []byte(`{"title":"source title"}`), []byte(`{"positions":[1]}`), nil, "batch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.LinkCalibreSource("library-uuid", "book-uuid", book.ID, []byte(`{"title":"source title"}`), []byte(`{"rating":5}`), []byte(`{"positions":[1]}`), "2026-01-01"); err != nil {
+		t.Fatal(err)
+	}
+	if id, found, e := s.CalibreBookID("library-uuid", "book-uuid"); e != nil || !found || id != book.ID {
+		t.Fatalf("Calibre mapping = %q, %v, %v", id, found, e)
+	}
+	books, err := s.ListBooks()
+	var custom map[string]any
+	if len(books) > 0 {
+		_ = json.Unmarshal(books[0].CustomMetadata, &custom)
+	}
+	if err != nil || len(books) != 1 || custom["rating"] != float64(5) {
+		t.Fatalf("metadata-only Calibre book lost: %#v, %v", books, err)
+	}
+	var raw, state string
+	if err = s.db.QueryRow(`SELECT source_metadata_json,reading_state_json FROM books WHERE id=?`, book.ID).Scan(&raw, &state); err != nil || raw != `{"title":"source title"}` || state != `{"positions":[1]}` {
+		t.Fatalf("source payloads not retained: raw=%s state=%s err=%v", raw, state, err)
+	}
+	if _, _, err = s.BookSource(book.ID); err == nil {
+		t.Fatal("metadata-only book should not claim an EPUB source")
+	}
+}
+
 func TestReplaceCoverPersistsAndExportsWithoutChangingOriginal(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(t.TempDir(), "book.epub")
@@ -382,6 +475,11 @@ func TestSubjectsMigrationBackfillsWithoutChangingUserMetadataOrEPUB(t *testing.
 	}
 	original := filepath.Join(bookDir, "original.epub")
 	fixtureEPUB(t, original, "Source Title")
+	coverPath := filepath.Join(bookDir, "cover.jpg")
+	coverData := jpegCover(t)
+	if err := os.WriteFile(coverPath, coverData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	before, err := fileHash(original)
 	if err != nil {
 		t.Fatal(err)
@@ -390,11 +488,20 @@ func TestSubjectsMigrationBackfillsWithoutChangingUserMetadataOrEPUB(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`CREATE TABLE books (id TEXT PRIMARY KEY,title TEXT NOT NULL,authors TEXT NOT NULL,language TEXT NOT NULL DEFAULT '',sha256 TEXT NOT NULL UNIQUE,cover_path TEXT NOT NULL DEFAULT '',original_path TEXT NOT NULL,added_at TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1)`)
+	_, err = db.Exec(`CREATE TABLE books (id TEXT PRIMARY KEY,title TEXT NOT NULL,authors TEXT NOT NULL,language TEXT NOT NULL DEFAULT '',sha256 TEXT NOT NULL UNIQUE,cover_path TEXT NOT NULL DEFAULT '',original_path TEXT NOT NULL,added_at TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1);
+		CREATE TABLE reading_progress (book_id TEXT PRIMARY KEY, chapter_index INTEGER NOT NULL, position REAL NOT NULL, updated_at TEXT NOT NULL);
+		CREATE TABLE reader_bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, book_id TEXT NOT NULL, chapter_index INTEGER NOT NULL, position REAL NOT NULL, created_at TEXT NOT NULL);`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO books(id,title,authors,language,sha256,original_path,added_at,revision) VALUES(?,?,?,?,?,?,?,?)`, id, "User Edited Title", `["User Author"]`, "en", before, filepath.ToSlash(filepath.Join("books", id, "original.epub")), "2026-01-01T00:00:00Z", 4)
+	_, err = db.Exec(`INSERT INTO books(id,title,authors,language,sha256,cover_path,original_path,added_at,revision) VALUES(?,?,?,?,?,?,?,?,?)`, id, "User Edited Title", `["User Author"]`, "en", before, filepath.ToSlash(filepath.Join("books", id, "cover.jpg")), filepath.ToSlash(filepath.Join("books", id, "original.epub")), "2026-01-01T00:00:00Z", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO reading_progress(book_id,chapter_index,position,updated_at) VALUES(?,?,?,?)`, id, 2, 0.42, "2026-01-02T00:00:00Z")
+	if err == nil {
+		_, err = db.Exec(`INSERT INTO reader_bookmarks(book_id,chapter_index,position,created_at) VALUES(?,?,?,?)`, id, 3, 0.67, "2026-01-03T00:00:00Z")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,6 +532,25 @@ func TestSubjectsMigrationBackfillsWithoutChangingUserMetadataOrEPUB(t *testing.
 	}
 	if b.FileSize <= 0 || b.ModifiedAt == "" {
 		t.Fatalf("missing original stats: %#v", b)
+	}
+	file, indexedPath, err := s.BookFileSourceByFormat(id, "epub")
+	if err != nil || file.Format != "epub" || file.SHA256 != before || indexedPath != original {
+		t.Fatalf("legacy file index = %#v path=%q err=%v", file, indexedPath, err)
+	}
+	progress, err := s.ReadingProgress(id)
+	if err != nil || progress.ChapterIndex != 2 || progress.Position != 0.42 {
+		t.Fatalf("legacy reading progress = %#v err=%v", progress, err)
+	}
+	bookmarks, err := s.ReadingBookmarks(id)
+	if err != nil || len(bookmarks) != 1 || bookmarks[0].ChapterIndex != 3 || bookmarks[0].Position != 0.67 {
+		t.Fatalf("legacy bookmarks = %#v err=%v", bookmarks, err)
+	}
+	migratedCover, err := s.CoverPath(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(migratedCover); err != nil || !bytes.Equal(data, coverData) {
+		t.Fatalf("legacy cover changed: err=%v", err)
 	}
 	if after, e := fileHash(original); e != nil || after != before {
 		t.Fatalf("migration modified source EPUB: %q %v", after, e)
