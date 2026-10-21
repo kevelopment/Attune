@@ -16,7 +16,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-var appVersion = "0.0.11"
+var appVersion = "0.0.12"
 var updateEnabled = "false"
 
 type UpdateState struct {
