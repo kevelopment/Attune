@@ -27,7 +27,7 @@ type PageSize = { width: number; height: number }
 
 const PAGE_CACHE_LIMIT = 5
 const themeBackground: Record<ReaderSettings['theme'], string> = {
-  light: '#fff', dark: '#1c1d20', sepia: '#f2eadb', gray: '#bcbcbc', charcoal: '#303030',
+  light: '#fff', dark: '#232428', sepia: '#f2eadb', gray: '#bcbcbc', charcoal: '#303030',
 }
 
 /** Renders PDF and comic pages into an isolated, script-free canvas surface. */

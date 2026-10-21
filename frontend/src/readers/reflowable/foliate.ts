@@ -18,7 +18,7 @@ type FoliateBook = {
 }
 type FoliateView = HTMLElement & {
   book?: FoliateBook
-  renderer?: HTMLElement & { setAttribute(name: string, value: string): void }
+  renderer?: HTMLElement & { setAttribute(name: string, value: string): void; setStyles?(styles: string): void }
   lastLocation?: FoliateLocation
   resolveCFI?(cfi: string): { index?: number } | undefined
   open(source: string | File): Promise<void>
@@ -32,8 +32,8 @@ type FoliateView = HTMLElement & {
 }
 
 const themeColors: Record<ReaderSettings['theme'], [string, string, string]> = {
-  light: ['#fff', '#2d2d31', '#4667bb'],
-  dark: ['#1c1d20', '#e9e6df', '#a6baff'],
+  light: ['#fff', '#25262a', '#5278dc'],
+  dark: ['#232428', '#e6e6e8', '#89a5ff'],
   sepia: ['#f2eadb', '#40372c', '#715e48'],
   gray: ['#bcbcbc', '#303030', '#4e4e4e'],
   charcoal: ['#303030', '#ededed', '#c2c2c2'],
@@ -202,7 +202,9 @@ export class FoliateReflowableAdapter implements ReaderAdapter {
     renderer.setAttribute('max-inline-size', '760px')
     renderer.setAttribute('margin', `${Math.max(18, settings.padding / 2)}px`)
     for (const { doc } of (renderer as unknown as { getContents?: () => Array<{ doc: Document }> }).getContents?.() ?? []) this.applyDocumentStyles(doc, settings)
-    this.host?.style.setProperty('--reader-bg', themeColors[settings.theme][0])
+    const background = themeColors[settings.theme][0]
+    this.host?.style.setProperty('--reader-bg', background)
+    if (this.host) this.host.style.backgroundColor = background
   }
 
   private applyDocumentStyles(doc: Document, settings?: ReaderSettings) {
@@ -212,6 +214,8 @@ export class FoliateReflowableAdapter implements ReaderAdapter {
     if (!style) { style = doc.createElement('style'); style.id = 'attune-reader-foliate-style'; doc.head.append(style) }
     const [background, foreground, link] = themeColors[current.theme]
     style.textContent = `html,body{background:${background}!important;color:${foreground}!important}body,body *{font-family:${fontFamilies[current.font]}!important;color:${foreground}!important}body{font-size:${current.fontSize}px!important;line-height:${current.lineHeight}!important;padding-inline:${current.padding}px!important;box-sizing:border-box!important}p,li,blockquote{line-height:${current.lineHeight}!important}a{color:${link}!important}img,svg,video{max-width:100%;height:auto}`
+    // Foliate paints its own backdrop outside the content iframe. Refresh it too.
+    this.host?.renderer?.setStyles?.('')
   }
   private lastSettings?: ReaderSettings
 

@@ -927,6 +927,27 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     return () => document.removeEventListener('fullscreenchange', onFullscreen)
   }, [])
   useEffect(() => {
+    if (bridge.preview) return
+    const syncFullscreen = () => {
+      const state = window.runtime?.WindowIsFullscreen?.()
+      if (state) void state.then(setFullscreen).catch(() => {})
+    }
+    window.addEventListener('resize', syncFullscreen)
+    return () => window.removeEventListener('resize', syncFullscreen)
+  }, [])
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !fullscreen || textMenuOpen || document.querySelector('.dropdown-select-menu')) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (bridge.preview) void document.exitFullscreen?.()
+      else window.runtime?.WindowUnfullscreen?.()
+      setFullscreen(false)
+    }
+    window.addEventListener('keydown', onEscape, true)
+    return () => window.removeEventListener('keydown', onEscape, true)
+  }, [fullscreen, textMenuOpen])
+  useEffect(() => {
     if (!textMenuOpen) return
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement
@@ -965,13 +986,13 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
     doc.getElementById('attune-reader-style')?.remove()
     const style = doc.createElement('style')
     style.id = 'attune-reader-style'
-    const colors = theme === 'dark' ? ['#1c1d20', '#e9e6df', '#a6baff'] : theme === 'sepia' ? ['#f2eadb', '#40372c', '#715e48'] : theme === 'gray' ? ['#bcbcbc', '#303030', '#4e4e4e'] : theme === 'charcoal' ? ['#303030', '#ededed', '#c2c2c2'] : ['#fff', '#2d2d31', '#4667bb']
+    const colors = theme === 'dark' ? ['#232428', '#e6e6e8', '#89a5ff'] : theme === 'sepia' ? ['#f2eadb', '#40372c', '#715e48'] : theme === 'gray' ? ['#bcbcbc', '#303030', '#4e4e4e'] : theme === 'charcoal' ? ['#303030', '#ededed', '#c2c2c2'] : ['#fff', '#25262a', '#5278dc']
     const families: Record<string, string> = { serif: 'Georgia, "Times New Roman", serif', book: 'Palatino, "Book Antiqua", serif', sans: 'system-ui, -apple-system, sans-serif', mono: 'ui-monospace, monospace' }
     const paged = layout !== 'continuous'
     const spread = layout === 'two-page'
     const padding = Math.min(sidePadding, doc.documentElement.clientWidth / (spread ? 8 : 4))
     // Each column plus its gutter is exactly one leaf; a spread always advances one viewport.
-    const pageRules = paged ? `html{height:100%!important;overflow:hidden!important;touch-action:pan-y}body{box-sizing:border-box!important;height:100vh!important;width:100%!important;min-width:0!important;max-width:none!important;margin:0!important;padding:24px ${padding}px!important;column-count:${spread ? 2 : 1}!important;column-width:auto!important;column-gap:${padding * 2}px!important;column-fill:auto!important;overflow:visible!important;direction:ltr!important;writing-mode:horizontal-tb!important;}` : `html{height:auto;overflow-y:auto!important;overflow-x:hidden!important}body{box-sizing:border-box!important;width:auto!important;max-width:680px!important;height:auto!important;margin:0 auto!important;padding:52px ${sidePadding}px 72px!important;column-count:auto!important;column-width:auto!important;column-gap:normal!important;}`
+    const pageRules = paged ? `html{height:100%!important;overflow:hidden!important;touch-action:pan-y}body{box-sizing:border-box!important;height:100vh!important;width:100%!important;min-width:0!important;max-width:none!important;margin:0!important;padding:24px ${padding}px!important;column-count:${spread ? 2 : 1}!important;column-width:auto!important;column-gap:${padding * 2}px!important;column-fill:auto!important;overflow:visible!important;direction:ltr!important;writing-mode:horizontal-tb!important;}` : `html{height:auto;overflow-y:auto!important;overflow-x:hidden!important}body{box-sizing:border-box!important;width:auto!important;max-width:760px!important;height:auto!important;margin:0 auto!important;padding:52px ${sidePadding}px 72px!important;column-count:auto!important;column-width:auto!important;column-gap:normal!important;}`
     style.textContent = `html,body{background:${colors[0]}!important;color:${colors[1]}!important}body,body *{font-family:${families[font]}!important;color:${colors[1]}!important}body{font-size:${fontSize}px!important;line-height:${lineHeight}!important}${pageRules}p,li,blockquote{line-height:${lineHeight}!important}a{color:${colors[2]}!important}img,svg,video{max-width:100%;max-height:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}`
     doc.head.appendChild(style)
     if (paged) pagination.current = createReaderPagination(doc, spread ? 2 : 1, padding, position)
@@ -1202,8 +1223,8 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
             <label className="reader-text-control"><span>Text padding <output>{sidePadding}px</output></span><input aria-label="Text side padding" type="range" min="24" max="96" step="4" value={sidePadding} style={{ '--range-progress': `${((sidePadding - 24) / 72) * 100}%` } as CSSProperties} onChange={e => setSidePadding(Number(e.target.value))}/></label>
           </div>, fullscreen && panel.current ? panel.current : document.body)}
         </div> : <div className="reader-dropdown reader-fit-dropdown"><DropdownSelect label="Page fit" value={fit} onChange={value => setFit(value as ReaderSettings['fit'])} options={[{ value: 'page', label: 'Fit page' }, { value: 'width', label: 'Fit width' }]}/></div>}
-        <div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'dark', label: 'Dark' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }]}/></div>
-        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
+        <div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }, { value: 'dark', label: 'Dark' }]}/></div>
+        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (bridge.preview) { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() } else if (fullscreen) { window.runtime?.WindowUnfullscreen?.(); setFullscreen(false) } else if (window.runtime?.WindowFullscreen) { window.runtime.WindowFullscreen(); setFullscreen(true) } }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
       </div>
     </div>
     <div className={`reader-layout ${tocOpen ? '' : 'toc-hidden'}`}>
@@ -1213,7 +1234,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
       </nav>}
       <div className={`reader-content reader-content-${layout}`} tabIndex={0} onKeyDown={event => { if (event.target !== event.currentTarget && (event.target as HTMLElement).closest('button,input,select,textarea')) return; if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); turnPage(event.key === 'ArrowLeft' ? -1 : 1) } }} onClick={event => { if (layout === 'continuous' || (event.target as HTMLElement).closest('button')) return; const bounds = event.currentTarget.getBoundingClientRect(); turnPage(event.clientX < bounds.left + bounds.width / 2 ? -1 : 1) }}>
         {engineMode && selectedFile && <ReaderSurface key={`${book.id}:${selectedFile.id}`} ref={engine} bookID={book.id} file={selectedFile} legacyProgress={progress} settings={readerSettings} onSections={setEngineSections} onLocation={(locator, index) => { setEngineChapterIndex(index); setEngineProgress(locator.progress); setProgress({ chapterIndex: index, position: locator.progress }); setSavedPosition(locator.progress) }} onError={setEngineError} onLoading={setEngineLoading}/>}
-        {engineMode ? (readerLoading || readerError) && <div className={`reader-engine-message ${readerError ? 'preview-error' : ''}`}>{readerError ? <><AlertCircle/>{readerError}</> : <><LoaderCircle className="spinning"/>Opening book…</>}</div> : readerLoading ? <div className="preview-message"><LoaderCircle className="spinning"/>Opening book…</div> : readerError ? <div className="preview-message preview-error"><AlertCircle/>{readerError}</div> : !active ? <div className="preview-message">No readable chapters found.</div> : <iframe key={active.href} ref={frame} title={`${book.title}: ${active.title}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" src={bridge.preview ? undefined : safeHref || undefined} srcDoc={previewHtml} style={{ width: layout === 'two-page' ? 'min(1280px, 100%)' : layout === 'single' ? 'min(760px, 100%)' : '100%' }} onLoad={onFrameLoad}/>}
+        {engineMode ? (readerLoading || readerError) && <div className={`reader-engine-message ${readerError ? 'preview-error' : ''}`}>{readerError ? <><AlertCircle/>{readerError}</> : <><LoaderCircle className="spinning"/>Opening book…</>}</div> : readerLoading ? <div className="preview-message"><LoaderCircle className="spinning"/>Opening book…</div> : readerError ? <div className="preview-message preview-error"><AlertCircle/>{readerError}</div> : !active ? <div className="preview-message">No readable chapters found.</div> : <iframe key={active.href} ref={frame} title={`${book.title}: ${active.title}`} sandbox="allow-same-origin" referrerPolicy="no-referrer" src={bridge.preview ? undefined : safeHref || undefined} srcDoc={previewHtml} style={{ width: layout === 'two-page' ? 'min(1280px, 100%)' : 'min(760px, 100%)' }} onLoad={onFrameLoad}/>}
         {layout !== 'continuous' && !readerLoading && !readerError && active && <><button className="reader-page-turn reader-page-turn-prev" aria-label="Previous page" title="Previous page" onClick={() => turnPage(-1)}><ChevronLeft size={21}/></button><button className="reader-page-turn reader-page-turn-next" aria-label="Next page" title="Next page" onClick={() => turnPage(1)}><ChevronRight size={21}/></button></>}
       </div>
     </div>
