@@ -41,3 +41,10 @@ func startDetached(cmd *exec.Cmd) error {
 	}
 	return cmd.Process.Release()
 }
+
+func startUpdateHelper(cmd *exec.Cmd) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | 0x00000008}
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	return cmd.Start()
+}

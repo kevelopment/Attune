@@ -155,6 +155,27 @@ func TestDownloadAndStageVerifiesChecksumAndKeepsOnlyValidatedPackage(t *testing
 	}
 }
 
+func TestDownloadRejectsTruncatedResponseAndRemovesPartialFile(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "update.zip")
+	client := &Client{HTTP: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader("partial")),
+			ContentLength: int64(len("partial") + 1),
+			Request:       req,
+		}, nil
+	})}}
+
+	err := client.download(context.Background(), "https://github.com/kevelopment/Attune/releases/download/v1.2.3/file.zip", dest, nil)
+	if err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("download error = %v, want incomplete response error", err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("partial download remains at %s: %v", dest, err)
+	}
+}
+
 func releaseCheckClient(t *testing.T, releases []map[string]any) *Client {
 	t.Helper()
 	data, err := json.Marshal(releases)

@@ -271,7 +271,16 @@ func (c *Client) download(ctx context.Context, raw, dest string, overall *int64)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	closed := false
+	complete := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
+		}
+		if !complete {
+			_ = os.Remove(dest)
+		}
+	}()
 	reader := &progressReader{r: io.LimitReader(res.Body, maxDownloadBytes+1), total: res.ContentLength, callback: c.Progress, overall: overall}
 	n, err := io.Copy(f, reader)
 	if err != nil {
@@ -280,7 +289,19 @@ func (c *Client) download(ctx context.Context, raw, dest string, overall *int64)
 	if n > maxDownloadBytes {
 		return errors.New("update package exceeds size limit")
 	}
-	return f.Sync()
+	if res.ContentLength >= 0 && n != res.ContentLength {
+		return fmt.Errorf("update package download was incomplete: received %d of %d bytes", n, res.ContentLength)
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		closed = true
+		return err
+	}
+	closed = true
+	complete = true
+	return nil
 }
 
 type progressReader struct {

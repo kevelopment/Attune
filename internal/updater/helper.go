@@ -40,6 +40,7 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 	if !inside(updaterDir, planPath) {
 		return errors.New("update plan is outside the private Attune updater folder")
 	}
+	defer os.Remove(planPath + ".ready")
 	b, err := os.ReadFile(planPath)
 	if err != nil {
 		return err
@@ -60,6 +61,9 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 	}
 	if !inside(cache, plan.Staged) {
 		return errors.New("staged update is outside the Attune cache")
+	}
+	if err := os.WriteFile(planPath+".ready", []byte("ready\n"), 0o600); err != nil {
+		return fmt.Errorf("signal updater helper readiness: %w", err)
 	}
 	if err := wait(plan.ParentPID, 20*time.Minute); err != nil {
 		return err
@@ -147,6 +151,15 @@ func CopySelfForHelper(dest string) error {
 	if err != nil {
 		return err
 	}
+	return copyExecutableForHelper(exe, dest)
+}
+
+func copyExecutableForHelper(exe, dest string) error {
+	if runtime.GOOS == "darwin" {
+		if err := copyHelperFrameworks(filepath.Dir(exe), filepath.Dir(dest)); err != nil {
+			return fmt.Errorf("copy updater helper frameworks: %w", err)
+		}
+	}
 	in, err := os.Open(exe)
 	if err != nil {
 		return err
@@ -190,6 +203,36 @@ func CopySelfForHelper(dest string) error {
 	return nil
 }
 
+func copyHelperFrameworks(executableDir, helperDir string) error {
+	source := filepath.Clean(filepath.Join(executableDir, "..", "Frameworks"))
+	if _, err := os.Stat(source); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	parent := filepath.Dir(helperDir)
+	target := filepath.Join(parent, "Frameworks")
+	stage, err := os.MkdirTemp(parent, ".updater-frameworks-")
+	if err != nil {
+		return err
+	}
+	_ = os.Remove(stage)
+	if err := copyTree(source, stage); err != nil {
+		_ = os.RemoveAll(stage)
+		return err
+	}
+	if err := os.RemoveAll(target); err != nil {
+		_ = os.RemoveAll(stage)
+		return err
+	}
+	if err := os.Rename(stage, target); err != nil {
+		_ = os.RemoveAll(stage)
+		return err
+	}
+	return nil
+}
+
 func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error {
 	if err := ValidatePackage(staged, goos); err != nil {
 		return err
@@ -205,7 +248,11 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	if err = os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := CopySelfForHelper(helperExecutable(dir)); err != nil {
+	helperPath := helperExecutable(dir)
+	if err := os.MkdirAll(filepath.Dir(helperPath), 0o700); err != nil {
+		return err
+	}
+	if err := CopySelfForHelper(helperPath); err != nil {
 		return err
 	}
 	planPath := filepath.Join(dir, "pending-update.json")
@@ -215,19 +262,78 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	if err := writePlan(planPath, Plan{ParentPID: os.Getpid(), Staged: staged, Target: target, GOOS: goos, LibraryPath: libraryPath, Restart: restart}); err != nil {
 		return err
 	}
+	readyPath := planPath + ".ready"
+	if err := os.Remove(readyPath); err != nil && !os.IsNotExist(err) {
+		_ = os.Remove(planPath)
+		return fmt.Errorf("remove previous updater readiness marker: %w", err)
+	}
+	startupLog := filepath.Join(dir, "helper-startup.log")
 	cmd := exec.Command(helperExecutable(dir), "--attune-update-helper", planPath)
 	cmd.Dir = dir
-	if err := startDetached(cmd); err != nil {
+	return startHelperAndWait(cmd, planPath, startupLog, 5*time.Second)
+}
+
+func startHelperAndWait(cmd *exec.Cmd, planPath, startupLog string, timeout time.Duration) error {
+	readyPath := planPath + ".ready"
+	logFile, err := os.OpenFile(startupLog, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
 		_ = os.Remove(planPath)
+		return fmt.Errorf("open updater startup log: %w", err)
+	}
+	cmd.Stderr = logFile
+	if err := startUpdateHelper(cmd); err != nil {
+		_ = logFile.Close()
+		_ = os.Remove(planPath)
+		_ = os.Remove(readyPath)
 		return fmt.Errorf("start update helper: %w", err)
 	}
-	return nil
+	_ = logFile.Close()
+	waitResult := make(chan error, 1)
+	go func() { waitResult <- cmd.Wait() }()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(readyPath); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			_ = cmd.Process.Kill()
+			<-waitResult
+			_ = os.Remove(planPath)
+			_ = os.Remove(readyPath)
+			return fmt.Errorf("check updater helper readiness: %w", err)
+		}
+		select {
+		case err := <-waitResult:
+			output, _ := os.ReadFile(startupLog)
+			_ = os.Remove(planPath)
+			_ = os.Remove(readyPath)
+			if detail := strings.TrimSpace(string(output)); detail != "" {
+				return fmt.Errorf("update helper exited before becoming ready: %s", detail)
+			}
+			if err == nil {
+				return errors.New("update helper exited before becoming ready")
+			}
+			return fmt.Errorf("update helper exited before becoming ready: %w", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	_ = cmd.Process.Kill()
+	<-waitResult
+	output, _ := os.ReadFile(startupLog)
+	_ = os.Remove(planPath)
+	_ = os.Remove(readyPath)
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		return fmt.Errorf("update helper did not become ready: %s", detail)
+	}
+	return fmt.Errorf("update helper did not become ready within %s", timeout)
 }
 
 func helperExecutable(dir string) string {
 	name := "attune-update-helper"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(dir, "MacOS", name)
 	}
 	return filepath.Join(dir, name)
 }
