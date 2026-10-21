@@ -34,3 +34,10 @@ func startDetached(cmd *exec.Cmd) error {
 	}
 	return cmd.Process.Release()
 }
+
+func startUpdateHelper(cmd *exec.Cmd) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	return cmd.Start()
+}

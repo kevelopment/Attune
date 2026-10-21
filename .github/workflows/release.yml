@@ -181,6 +181,11 @@ jobs:
       - name: Test
         run: mise run test
 
+      - name: Verify packaged updater startup
+        env:
+          ATTUNE_UPDATER_TEST_APP: ${{ github.workspace }}/build/bin/${{ matrix.goos == 'darwin' && 'Attune.app/Contents/MacOS/Attune' || matrix.goos == 'windows' && 'Attune.exe' || 'Attune' }}
+        run: go test ./internal/updater -run '^TestPackagedHelperStartup$' -count=1
+
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: package-${{ matrix.id }}-${{ needs.validate.outputs.artifact_version }}
