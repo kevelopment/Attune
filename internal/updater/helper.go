@@ -67,15 +67,17 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 	if err := apply(plan.Staged, plan.Target, plan.GOOS, plan.LibraryPath); err != nil {
 		return err
 	}
+	if plan.Restart {
+		if err := restart(plan.Target, plan.GOOS); err != nil {
+			return fmt.Errorf("relaunch updated app: %w", err)
+		}
+	}
 	_ = os.Remove(planPath)
 	_ = os.Remove(filepath.Join(updaterDir, "state.json"))
 	if inside(filepath.Join(cache, "updates"), plan.Staged) {
 		_ = os.RemoveAll(filepath.Dir(plan.Staged))
 	}
 	_ = os.Remove(filepath.Join(updaterDir, "last-update-error.txt"))
-	if plan.Restart {
-		return restart(plan.Target, plan.GOOS)
-	}
 	return nil
 }
 
@@ -85,16 +87,20 @@ func inside(root, candidate string) bool {
 }
 
 func relaunch(target, goos string) error {
-	var cmd *exec.Cmd
 	if goos == "darwin" {
-		cmd = exec.Command("open", "-a", target)
-	} else {
-		name := "Attune"
-		if goos == "windows" {
-			name += ".exe"
+		cmd := exec.Command("open", target)
+		cmd.Dir = filepath.Dir(target)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("open updated app: %w: %s", err, strings.TrimSpace(string(output)))
 		}
-		cmd = exec.Command(filepath.Join(target, name))
+		return nil
 	}
+	name := "Attune"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	cmd := exec.Command(filepath.Join(target, name))
 	cmd.Dir = filepath.Dir(target)
 	return startDetached(cmd)
 }
