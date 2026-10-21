@@ -39,6 +39,7 @@ function bookCover(book: Book) {
   return bridge.preview ? url : `${url}${url.includes('?') ? '&' : '?'}revision=${book.revision}`
 }
 const recentWindowMs = 30 * 86400000
+const readerFormatOrder = ['epub', 'pdf', 'mobi', 'azw3', 'azw', 'fb2', 'txt', 'cbz', 'cbr']
 function localDateKey(date: Date) { return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}` }
 function recentDayLabel(date: Date, today: Date, yesterday: Date) {
   const fullDate = new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(date)
@@ -530,7 +531,7 @@ export default function App() {
     setState(next)
     setFocusedBook(next.books.find(item => item.id === book.id) ?? book)
   }
-  async function openPreview(book: Book) {
+  async function openPreview(book: Book, requestedFileID?: string) {
     setPreviewTarget(book)
     setReaderOpen(true)
     setBookPreview(null)
@@ -545,7 +546,11 @@ export default function App() {
         setPreviewChapter(Math.max(0, Math.min(next.chapters.length - 1, saved.chapterIndex)))
       } else {
         const readable = (book.files ?? []).filter(file => file.canRead)
-        const chosen = readable.find(file => file.preferred) ?? readable[0]
+        const chosen = readable.find(file => file.id === requestedFileID) ?? [...readable].sort((left, right) => {
+          const leftOrder = readerFormatOrder.indexOf(left.format.toLowerCase())
+          const rightOrder = readerFormatOrder.indexOf(right.format.toLowerCase())
+          return (leftOrder < 0 ? Number.MAX_SAFE_INTEGER : leftOrder) - (rightOrder < 0 ? Number.MAX_SAFE_INTEGER : rightOrder) || Number(right.preferred) - Number(left.preferred)
+        })[0]
         if (!chosen) throw new Error('This book has no format that Attune can read yet. Add a supported format or open a file with another app.')
         setBookPreview({ book, chapters: [], fileID: chosen.id })
         const legacy = await bridge.getReadingProgress(book.id).catch(() => ({ bookID: book.id, chapterIndex: 0, position: 0 }))
@@ -731,7 +736,7 @@ export default function App() {
     </main>
     {importReport && <ImportReportDialog result={importReport} onClose={() => setImportReport(null)}/>}
     {devicePreferencesDraft && <DevicePreferencesDialog draft={devicePreferencesDraft} onChange={setDevicePreferencesDraft} onClose={() => setDevicePreferencesDraft(null)} onSave={() => void saveDevicePreferences()} onReset={() => void resetDevicePreferences()} disabled={busy || transferActive}/>}
-    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} canSend={canSendToDevice} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={() => void openPreview(focusedBook)} onOpenFile={fileID => void run(() => bridge.openBookFile(focusedBook.id, fileID))} onAttachFiles={() => void attachBookFiles(focusedBook)} onChangeCover={() => void changeCover(focusedBook)} coverDisabled={busy || transferActive || changingLibrary}/> </div>}
+    {detailsVisible && focusedBook && <div className="details-column">{resizeHandle}<DetailsPanel book={focusedBook} editing={editing} draft={editDraft} setDraft={setEditDraft} canSend={canSendToDevice} onClose={() => { setFocusedBook(null); setEditing(false) }} onEdit={() => void startEdit(focusedBook)} onSave={() => void saveEdit()} onCancel={() => setEditing(false)} onDelete={() => void deleteLocal(focusedBook)} onSend={() => void send([focusedBook.id])} onPreview={fileID => void openPreview(focusedBook, fileID)} onOpenFile={fileID => void run(() => bridge.openBookFile(focusedBook.id, fileID))} onAttachFiles={() => void attachBookFiles(focusedBook)} onChangeCover={() => void changeCover(focusedBook)} coverDisabled={busy || transferActive || changingLibrary}/> </div>}
     {bridge.preview && <input hidden type="file" ref={coverInputRef} accept="image/jpeg,image/png,.jpg,.jpeg,.png" aria-label="Choose cover image" onChange={e => { const file = e.currentTarget.files?.[0]; const book = coverTarget.current; e.currentTarget.value = ''; coverTarget.current = null; if (file && book) void changeCover(book, file) }}/ >}
     {detailsVisible && focusedDeviceBook && <div className="details-column">{resizeHandle}<DeviceDetailsPanel book={focusedDeviceBook} deviceName={device?.name ?? 'Reader'} libraryBook={(state?.books ?? []).find(book => book.id === focusedDeviceBook.bookID)} onClose={() => setFocusedDeviceBook(null)} onPreview={book => void openPreview(book)}/></div>}
     {pasteMenu && <div className="book-context-menu paste-context-menu" style={{ left: pasteMenu.left, top: pasteMenu.top }} role="menu" onContextMenu={e => e.preventDefault()}><button role="menuitem" onClick={() => { setPasteMenu(null); pasteFilesRef.current() }}><span className="menu-item-icon"><Upload size={16}/></span>Paste books <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘V' : 'Ctrl+V'}</kbd></button></div>}
@@ -1312,7 +1317,7 @@ function EmptyState({ recent, searching, onImport, onClear }: { recent: boolean;
 }
 
 const missingCover = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 620"><rect width="420" height="620" fill="#e6e6e8"/><path d="M145 230c0-12 10-22 22-22h80c12 0 22 10 22 22v150c0 12-10 22-22 22h-80c-12 0-22-10-22-22z" fill="#c8c9cd"/><path d="M210 208v194" stroke="#eee" stroke-width="7"/><path d="M163 263h38m-38 22h32m-32 22h36m38-44h28m-28 22h28m-28 22h28" stroke="#eee" stroke-width="5" stroke-linecap="round"/></svg>')}`
-function DetailsPanel({ book, editing, draft, setDraft, canSend, onClose, onEdit, onSave, onCancel, onDelete, onSend, onPreview, onOpenFile, onAttachFiles, onChangeCover, coverDisabled }: { book: Book; editing: boolean; draft: EditDraft; setDraft: React.Dispatch<React.SetStateAction<EditDraft>>; canSend: boolean; onClose: () => void; onEdit: () => void; onSave: () => void; onCancel: () => void; onDelete: () => void; onSend: () => void; onPreview: () => void; onOpenFile: (fileID: string) => void; onAttachFiles: () => void; onChangeCover: () => void; coverDisabled: boolean }) {
+function DetailsPanel({ book, editing, draft, setDraft, canSend, onClose, onEdit, onSave, onCancel, onDelete, onSend, onPreview, onOpenFile, onAttachFiles, onChangeCover, coverDisabled }: { book: Book; editing: boolean; draft: EditDraft; setDraft: React.Dispatch<React.SetStateAction<EditDraft>>; canSend: boolean; onClose: () => void; onEdit: () => void; onSave: () => void; onCancel: () => void; onDelete: () => void; onSend: () => void; onPreview: (fileID?: string) => void; onOpenFile: (fileID: string) => void; onAttachFiles: () => void; onChangeCover: () => void; coverDisabled: boolean }) {
   const update = (key: keyof EditDraft, value: string) => setDraft(current => ({ ...current, [key]: value }))
   const files = book.files ?? []
   const hasReadableFile = files.some(file => file.canRead)
@@ -1331,7 +1336,7 @@ function DetailsPanel({ book, editing, draft, setDraft, canSend, onClose, onEdit
       <div className="edit-series"><label>Series<input value={draft.series} onChange={e => update('series', e.target.value)}/></label><label>Index<input value={draft.seriesIndex} onChange={e => update('seriesIndex', e.target.value)}/></label></div>
       <label>Description<textarea rows={5} value={draft.description} onChange={e => update('description', e.target.value)}/></label>
       <div className="edit-actions"><button className="quiet-button" onClick={onCancel}>Cancel</button><button className="toolbar-button primary-button" onClick={onSave} disabled={!draft.title.trim()}><Check size={15}/> Save</button></div>
-    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions">{hasReadableFile && <button className="toolbar-button primary-button" onClick={onPreview}><BookOpen size={15}/> Read</button>}{canSend && <button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to device</button>}<button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><section className="book-files" aria-label="Book files"><div className="book-files-heading"><h3>Files</h3><button className="quiet-button" disabled={coverDisabled} onClick={onAttachFiles}><Plus size={14}/> Add files</button></div>{files.length ? files.map(file => <div className="book-file-row" key={file.id}><div><strong>{file.format.toUpperCase()}</strong><span>{file.filename} · {fmtBytes(file.size)}{file.preferred ? ' · Preferred' : ''}</span></div>{file.canRead ? <button className="quiet-button" onClick={onPreview}>Read</button> : <button className="quiet-button" onClick={() => onOpenFile(file.id)}>Open</button>}</div>) : <p className="book-files-empty">No files added yet.</p>}</section><MetadataDetails metadata={book} format={preferredFormat.toUpperCase()} fileSize={book.fileSize}/></>}
+    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions">{hasReadableFile && <button className="toolbar-button primary-button" onClick={() => onPreview()}><BookOpen size={15}/> Read</button>}{canSend && <button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to device</button>}<button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><section className="book-files" aria-label="Book files"><div className="book-files-heading"><h3>Files</h3><button className="quiet-button" disabled={coverDisabled} onClick={onAttachFiles}><Plus size={14}/> Add files</button></div>{files.length ? files.map(file => <div className="book-file-row" key={file.id}><div><strong>{file.format.toUpperCase()}</strong><span>{file.filename} · {fmtBytes(file.size)}{file.preferred ? ' · Preferred' : ''}</span></div>{file.canRead ? <button className="quiet-button" onClick={() => onPreview(file.id)}>Read</button> : <button className="quiet-button" onClick={() => onOpenFile(file.id)}>Open</button>}</div>) : <p className="book-files-empty">No files added yet.</p>}</section><MetadataDetails metadata={book} format={preferredFormat.toUpperCase()} fileSize={book.fileSize}/></>}
     <div className="detail-footer"><span>Imported book files are stored in your Attune library.</span><CircleHelp size={15}/></div>
   </aside>
 }

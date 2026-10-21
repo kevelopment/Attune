@@ -158,7 +158,6 @@ export class FixedLayoutAdapter implements ReaderAdapter {
         const page = Number((entry.target as HTMLElement).dataset.page)
         if (!Number.isInteger(page)) continue
         if (entry.isIntersecting) {
-          this.setLocation(page)
           void this.renderPage(page)
           if (page > 0) void this.renderPage(page - 1)
           if (page + 1 < this.sections.length) void this.renderPage(page + 1)
