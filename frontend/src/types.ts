@@ -44,6 +44,9 @@ declare global {
     go?: { main?: { App?: Record<string, (...args: any[]) => Promise<any>> } }
     runtime?: {
       EventsOn?: (event: string, cb: (...args: any[]) => void) => (() => void) | void
+      WindowFullscreen?: () => void
+      WindowUnfullscreen?: () => void
+      WindowIsFullscreen?: () => Promise<boolean>
       OnFileDrop?: (cb: (x: number, y: number, paths: string[]) => void, useDropTarget?: boolean) => void
       OnFileDropOff?: () => void
     }

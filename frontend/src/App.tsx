@@ -8,7 +8,6 @@ import {
   Bookmark, BookmarkPlus, Columns2, AlignLeft, Trash,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
-import { WindowFullscreen, WindowIsFullscreen, WindowUnfullscreen } from '../wailsjs/runtime/runtime'
 import type { ReaderAnnotation } from './bridge'
 import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, DevicePreferences, Progress, ImportProgress, ImportResult } from './types'
 import { useTextSize, useBookSize, type TextSize } from './appearance'
@@ -929,7 +928,10 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
   }, [])
   useEffect(() => {
     if (bridge.preview) return
-    const syncFullscreen = () => { void WindowIsFullscreen().then(setFullscreen).catch(() => {}) }
+    const syncFullscreen = () => {
+      const state = window.runtime?.WindowIsFullscreen?.()
+      if (state) void state.then(setFullscreen).catch(() => {})
+    }
     window.addEventListener('resize', syncFullscreen)
     return () => window.removeEventListener('resize', syncFullscreen)
   }, [])
@@ -939,7 +941,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
       event.preventDefault()
       event.stopImmediatePropagation()
       if (bridge.preview) void document.exitFullscreen?.()
-      else WindowUnfullscreen()
+      else window.runtime?.WindowUnfullscreen?.()
       setFullscreen(false)
     }
     window.addEventListener('keydown', onEscape, true)
@@ -1222,7 +1224,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
           </div>, fullscreen && panel.current ? panel.current : document.body)}
         </div> : <div className="reader-dropdown reader-fit-dropdown"><DropdownSelect label="Page fit" value={fit} onChange={value => setFit(value as ReaderSettings['fit'])} options={[{ value: 'page', label: 'Fit page' }, { value: 'width', label: 'Fit width' }]}/></div>}
         <div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }, { value: 'dark', label: 'Dark' }]}/></div>
-        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (bridge.preview) { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() } else if (fullscreen) { WindowUnfullscreen(); setFullscreen(false) } else { WindowFullscreen(); setFullscreen(true) } }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
+        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (bridge.preview) { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() } else if (fullscreen) { window.runtime?.WindowUnfullscreen?.(); setFullscreen(false) } else if (window.runtime?.WindowFullscreen) { window.runtime.WindowFullscreen(); setFullscreen(true) } }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
       </div>
     </div>
     <div className={`reader-layout ${tocOpen ? '' : 'toc-hidden'}`}>
