@@ -15,6 +15,9 @@ const foliatePDFStub = {
 
 export default defineConfig({
   plugins: [foliatePDFStub, react()],
+  // Foliate's PDF module uses top-level await; Attune loads its own PDF.js
+  // adapter and should serve Foliate's native ESM without dependency bundling.
+  optimizeDeps: { exclude: ['foliate-js'] },
   server: {
     host: '127.0.0.1',
     port,
