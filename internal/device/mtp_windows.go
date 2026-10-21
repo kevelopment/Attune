@@ -199,13 +199,9 @@ func (c *wpdClient) stop() {
 		c.mu.Unlock()
 		return
 	}
-	c.mu.Unlock()
-	// Ask the helper to close its WPD session and release COM objects on the
-	// owning thread before waiting for process exit.
-	_ = c.call(context.Background(), map[string]any{"op": "close"}, nil, nil)
-	c.mu.Lock()
 	c.closed = true
 	c.mu.Unlock()
+	// EOF makes the helper release its WPD session on the owning COM thread.
 	_ = c.in.Close()
 	_ = c.cmd.Wait()
 }

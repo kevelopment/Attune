@@ -85,3 +85,46 @@ func TestRunHelperPersistsFailure(t *testing.T) {
 		t.Fatalf("failure record = %q, %v", got, err)
 	}
 }
+
+func TestRunHelperKeepsUpdateWhenRelaunchFails(t *testing.T) {
+	cache := t.TempDir()
+	updaterDir := filepath.Join(cache, "updater")
+	stage := filepath.Join(cache, "updates", "release")
+	planPath := filepath.Join(updaterDir, "pending-update.json")
+	target := filepath.Join(t.TempDir(), "install")
+	if err := os.MkdirAll(updaterDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "payload"), []byte("staged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(updaterDir, "state.json")
+	if err := os.WriteFile(statePath, []byte("state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{ParentPID: 123, Staged: stage, Target: target, GOOS: runtime.GOOS, Restart: true}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("launch failed")
+	err = runHelper(planPath, cache, func(int, time.Duration) error { return nil }, func(string, string, string, string) error { return nil }, func(string, string) error { return want })
+	if !errors.Is(err, want) {
+		t.Fatalf("runHelper error = %v, want %v", err, want)
+	}
+	for _, path := range []string{planPath, statePath, filepath.Join(stage, "payload")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("relaunch failure should preserve %s: %v", path, err)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(updaterDir, "last-update-error.txt"))
+	if err != nil || string(got) != "relaunch updated app: launch failed\n" {
+		t.Fatalf("relaunch failure record = %q, %v", got, err)
+	}
+}
