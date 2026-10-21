@@ -15,6 +15,7 @@ type PdfDocument = {
   getPageIndex?(ref: unknown): Promise<number>
   destroy(): Promise<void>
 }
+type PdfLoadingTask = { promise: Promise<PdfDocument>; destroy(): Promise<void> }
 type PdfPage = {
   getViewport(options: { scale: number }): { width: number; height: number }
   render(options: { canvas: HTMLCanvasElement; canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }): { promise: Promise<void>; cancel(): void }
@@ -37,6 +38,7 @@ export class FixedLayoutAdapter implements ReaderAdapter {
   private surface?: HTMLElement
   private settings?: ReaderSettings
   private pdf?: PdfDocument
+  private pdfLoadingTask?: PdfLoadingTask
   private pages: ComicPage[] = []
   private sizes: PageSize[] = []
   private observer?: IntersectionObserver
@@ -98,8 +100,16 @@ export class FixedLayoutAdapter implements ReaderAdapter {
     ])
     signal?.throwIfAborted()
     GlobalWorkerOptions.workerSrc = worker.default
-    const task = getDocument({ url: source, withCredentials: true })
-    const pdf = await task.promise as unknown as PdfDocument
+    const task = getDocument({ url: source, withCredentials: true }) as unknown as PdfLoadingTask
+    this.pdfLoadingTask = task
+    const cancel = () => { void task.destroy().catch(() => {}) }
+    signal?.addEventListener('abort', cancel, { once: true })
+    let pdf: PdfDocument
+    try { pdf = await task.promise }
+    finally {
+      signal?.removeEventListener('abort', cancel)
+      if (this.pdfLoadingTask === task) this.pdfLoadingTask = undefined
+    }
     if (signal?.aborted || this.disposed) { await pdf.destroy(); return }
     this.pdf = pdf
     const metadata = await pdf.getMetadata().catch(() => undefined)
@@ -371,6 +381,10 @@ export class FixedLayoutAdapter implements ReaderAdapter {
     if (this.disposed) return
     this.disposed = true
     this.renderGeneration++
+    if (this.pdfLoadingTask) {
+      void this.pdfLoadingTask.destroy().catch(() => {})
+      this.pdfLoadingTask = undefined
+    }
     this.abortSignal?.removeEventListener('abort', this.abortHandler!)
     this.abortSignal = undefined
     this.abortHandler = undefined

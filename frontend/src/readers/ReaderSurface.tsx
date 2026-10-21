@@ -4,6 +4,8 @@ import type { BookFile, ReadingProgress } from '../types'
 import { createReaderAdapter } from './index'
 import type { ReaderLocator, ReaderSearchHit, ReaderSection, ReaderSettings } from './adapter'
 
+const OPEN_TIMEOUT_MS = 90_000
+
 export type ReaderSurfaceHandle = {
   next(): void
   previous(): void
@@ -59,6 +61,7 @@ export const ReaderSurface = forwardRef<ReaderSurfaceHandle, Props>(function Rea
     }
     const controller = new AbortController()
     let live = true
+    let openTimeout: number | undefined
     let lastLocator: ReaderLocator | null = null
     let lastSectionIndex = 0
     adapter.current = instance
@@ -76,8 +79,22 @@ export const ReaderSurface = forwardRef<ReaderSurfaceHandle, Props>(function Rea
           void bridge.saveReaderLocation(bookID, file.id, event.locator.version, event.locator).catch(() => {})
           void bridge.saveReadingProgress(bookID, event.sectionIndex, event.locator.progress).catch(() => {})
         }, 450)
-      } else callbacks.current.onError(event.message)
+      } else {
+        callbacks.current.onLoading(false)
+        callbacks.current.onError(event.message)
+      }
     })
+    openTimeout = window.setTimeout(() => {
+      if (!live) return
+      live = false
+      controller.abort()
+      unsubscribe()
+      window.clearTimeout(saveTimer.current)
+      instance.dispose()
+      if (adapter.current === instance) adapter.current = null
+      callbacks.current.onLoading(false)
+      callbacks.current.onError('This book did not finish opening. Close it and try again, or try another format.')
+    }, OPEN_TIMEOUT_MS)
 
     const source = file.format === 'cbz' || file.format === 'cbr'
       ? bridge.bookArchiveURL(bookID, file.id)
@@ -106,11 +123,14 @@ export const ReaderSurface = forwardRef<ReaderSurfaceHandle, Props>(function Rea
         if (!live || controller.signal.aborted) return
         callbacks.current.onLoading(false)
         callbacks.current.onError(error instanceof Error ? error.message : 'Could not open this book.')
+      } finally {
+        if (openTimeout !== undefined) window.clearTimeout(openTimeout)
       }
     })()
 
     return () => {
       live = false
+      if (openTimeout !== undefined) window.clearTimeout(openTimeout)
       controller.abort()
       unsubscribe()
       window.clearTimeout(saveTimer.current)

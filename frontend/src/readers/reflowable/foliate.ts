@@ -21,7 +21,7 @@ type FoliateView = HTMLElement & {
   renderer?: HTMLElement & { setAttribute(name: string, value: string): void }
   lastLocation?: FoliateLocation
   resolveCFI?(cfi: string): { index?: number } | undefined
-  open(source: string): Promise<void>
+  open(source: string | File): Promise<void>
   init(options?: { lastLocation?: string; showTextStart?: boolean }): Promise<void>
   goTo(target: string | number | { fraction: number }): Promise<unknown>
   prev(): Promise<void>
@@ -44,7 +44,8 @@ const fontFamilies: Record<ReaderFont, string> = {
   sans: 'system-ui, -apple-system, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, monospace',
 }
-const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`
+// EPUB content is XHTML, so injected void elements must be XML-well-formed.
+const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />`
 
 function sectionLabel(value: string | Record<string, string> | undefined, fallback: string) {
   if (typeof value === 'string') return value.trim() || fallback
@@ -102,7 +103,11 @@ export class FoliateReflowableAdapter implements ReaderAdapter {
     this.host = host
     container.replaceChildren(host)
     host.addEventListener('relocate', this.onRelocate)
-    await host.open(source)
+    const response = await fetch(source, { credentials: 'same-origin', signal })
+    if (!response.ok) throw new Error(`Could not load book (${response.status}).`)
+    const blob = await response.blob()
+    signal?.throwIfAborted()
+    await host.open(new File([blob], `attune.${this.format}`, { type: response.headers.get('Content-Type') ?? blob.type }))
     if (signal?.aborted) { this.dispose(); throw signal.reason }
     this.target = host.book?.transformTarget
     this.target?.addEventListener('data', injectCSP)
