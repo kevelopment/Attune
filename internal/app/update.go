@@ -16,7 +16,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-var appVersion = "0.0.10"
+var appVersion = "0.0.11"
 var updateEnabled = "false"
 
 type UpdateState struct {
@@ -32,6 +32,7 @@ type UpdateState struct {
 	Total          int64  `json:"total"`
 	Error          string `json:"error"`
 	stagedPath     string
+	stagedVersion  string
 }
 
 func (a *App) GetUpdateState() UpdateState {
@@ -53,11 +54,6 @@ func (a *App) CheckForUpdates() (UpdateState, error) {
 		a.updateMu.Unlock()
 		return state, nil
 	}
-	if a.updateState.Downloaded {
-		state := a.updateState
-		a.updateMu.Unlock()
-		return state, nil
-	}
 	a.updateState.Status = "checking"
 	a.updateState.Error = ""
 	a.updateState.CurrentVersion = appVersion
@@ -75,7 +71,30 @@ func (a *App) CheckForUpdates() (UpdateState, error) {
 		return a.setUpdateError(err)
 	}
 	a.updateMu.Lock()
-	if found {
+	if a.updateState.Downloaded {
+		stagedVersion := a.updateState.stagedVersion
+		if stagedVersion == "" {
+			stagedVersion = a.updateState.LatestVersion
+		}
+		staged, stagedErr := updater.ParseVersion(stagedVersion)
+		if found && stagedErr == nil && release.Version.Compare(staged) > 0 {
+			a.updateState.LatestVersion = release.Version.String()
+			a.updateState.Available = true
+			a.updateState.ReleaseURL = release.URL
+			a.updateState.ReleaseNotes = release.Notes
+		} else {
+			a.updateState.LatestVersion = stagedVersion
+			a.updateState.Available = false
+			if found && stagedErr == nil && release.Version.Compare(staged) == 0 {
+				a.updateState.ReleaseURL = release.URL
+				a.updateState.ReleaseNotes = release.Notes
+			} else {
+				a.updateState.ReleaseURL = ""
+				a.updateState.ReleaseNotes = ""
+			}
+		}
+		a.updateState.Status = "ready"
+	} else if found {
 		a.updateState.LatestVersion = release.Version.String()
 		a.updateState.Available = true
 		a.updateState.ReleaseURL = release.URL
@@ -99,7 +118,7 @@ func (a *App) DownloadUpdate() (UpdateState, error) {
 		return a.GetUpdateState(), errors.New("Self-updates are disabled for isolated development runs. Use the installed app.")
 	}
 	a.updateMu.Lock()
-	if a.updateState.Downloaded {
+	if a.updateState.Downloaded && !a.updateState.Available {
 		state := a.updateState
 		a.updateMu.Unlock()
 		return state, nil
@@ -114,6 +133,7 @@ func (a *App) DownloadUpdate() (UpdateState, error) {
 		return a.GetUpdateState(), errors.New("no update is available")
 	}
 	version := a.updateState.LatestVersion
+	oldStaged := a.updateState.stagedPath
 	releaseURL, err := url.Parse(a.updateState.ReleaseURL)
 	if err != nil || releaseURL.Scheme != "https" || !strings.EqualFold(releaseURL.Hostname(), "github.com") {
 		a.updateMu.Unlock()
@@ -188,14 +208,18 @@ func (a *App) DownloadUpdate() (UpdateState, error) {
 	a.updateMu.Lock()
 	a.updateState.Status = "ready"
 	a.updateState.Downloaded = true
-	a.updateState.Available = true
+	a.updateState.Available = false
 	a.updateState.Progress = 100
 	a.updateState.stagedPath = staged
+	a.updateState.stagedVersion = version
 	a.updateState.Error = ""
 	state := a.updateState
 	a.updateMu.Unlock()
 	if err := a.persistUpdateState(); err != nil {
 		return a.setUpdateError(err)
+	}
+	if oldStaged != "" && oldStaged != staged {
+		removeStagedUpdate(oldStaged)
 	}
 	a.emitUpdateState()
 	return state, nil
@@ -352,6 +376,8 @@ func loadUpdateState() UpdateState {
 		return state
 	}
 	saved.CurrentVersion = appVersion
+	saved.stagedVersion = saved.LatestVersion
+	saved.Available = false
 	saved.Status = "ready"
 	if lastError, e := os.ReadFile(filepath.Join(updaterDir, "last-update-error.txt")); e == nil {
 		saved.Error = strings.TrimSpace(string(lastError))
@@ -359,6 +385,41 @@ func loadUpdateState() UpdateState {
 		saved.Error = ""
 	}
 	return saved
+}
+
+func removeStagedUpdate(staged string) {
+	if filepath.Base(staged) != "package" {
+		return
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	root, err := filepath.Abs(filepath.Join(cache, "Attune", "updates"))
+	if err != nil {
+		return
+	}
+	parent, err := filepath.Abs(filepath.Dir(staged))
+	if err != nil || filepath.Base(parent) == "" || !strings.HasPrefix(filepath.Base(parent), "update-") {
+		return
+	}
+	relative, err := filepath.Rel(root, parent)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return
+	}
+	relative, err = filepath.Rel(resolvedRoot, resolvedParent)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return
+	}
+	_ = os.RemoveAll(resolvedParent)
 }
 
 func (a *App) applyUpdateOnQuit() {

@@ -32,7 +32,7 @@ export function useUpdater() {
   useEffect(() => {
     active.current = true
     const unsubscribe = bridge.on('update:state', (next: UpdateState) => { if (active.current) setState(next) })
-    void bridge.getUpdateState().then(next => { if (active.current) { setState(next); if (!next.downloaded) void check(false) } }).catch(() => { if (active.current) void check(false) })
+    void bridge.getUpdateState().then(next => { if (active.current) { setState(next); void check(false) } }).catch(() => { if (active.current) void check(false) })
     const focus = () => { if (document.visibilityState === 'visible') void check(false) }
     window.addEventListener('focus', focus)
     const timer = window.setInterval(() => void check(false), UPDATE_CHECK_INTERVAL)
@@ -61,24 +61,24 @@ export function useUpdater() {
 }
 
 export function UpdateSettingsCard({ state, onOpen }: { state: UpdateState; onOpen: () => void }) {
-  return <div className="settings-card"><div><strong>Software updates</strong><span>Attune {state.currentVersion}{state.downloaded ? ' · Ready to restart' : state.available ? ' · Update available' : ''}</span></div><button className="toolbar-button" onClick={onOpen}><Download size={16}/> {state.downloaded ? 'Review update' : state.available ? 'Update available' : 'Check for updates'}</button></div>
+  return <div className="settings-card"><div><strong>Software updates</strong><span>Attune {state.currentVersion}{state.downloaded && !state.available ? ' · Ready to restart' : state.available ? ' · Update available' : ''}</span></div><button className="toolbar-button" onClick={onOpen}><Download size={16}/> {state.downloaded && !state.available ? 'Review update' : state.available ? 'Update available' : 'Check for updates'}</button></div>
 }
 
 export default function Updates({ state, checked, onCheck, onDownload, onRestart, restartDisabled }: { state: UpdateState; checked: boolean; onCheck: () => void; onDownload: () => void; onRestart: () => void; restartDisabled: boolean }) {
   const pending = state.status === 'checking' || state.status === 'downloading' || state.status === 'restarting'
-  const title = state.downloaded ? 'Ready for your next chapter' : state.available ? 'A new version is available' : state.status === 'checking' ? 'Checking for updates…' : checked && state.status === 'idle' ? 'You’re up to date' : 'Software updates'
+  const title = state.downloaded && !state.available ? 'Ready for your next chapter' : state.available ? 'A new version is available' : state.status === 'checking' ? 'Checking for updates…' : checked && state.status === 'idle' ? 'You’re up to date' : 'Software updates'
   return <section className="settings-page update-page">
     <div className="settings-heading"><div className="settings-icon"><Download size={22}/></div><div><p>A little care for your library companion.</p></div></div>
     <div className="settings-card updates-card">
       <div className="update-summary"><strong>{title}</strong><span>Installed version {state.currentVersion}{state.latestVersion ? ` · ${state.available ? 'Available' : 'Latest'} version ${state.latestVersion}` : ''}</span>
-        {state.downloaded ? <p>The update is downloaded and verified. It will install when you quit Attune and be active the next time you open the app.</p> : <p>Updates come directly from Attune’s GitHub releases. Your library stays in place.</p>}
+        {state.downloaded && !state.available ? <p>The update is downloaded and verified. It will install when you quit Attune and be active the next time you open the app.</p> : state.downloaded ? <p>Attune {state.latestVersion} is available. Download it to replace the staged update.</p> : <p>Updates come directly from Attune’s GitHub releases. Your library stays in place.</p>}
       </div>
       <div className="settings-actions">
-        {state.downloaded ? <button className="toolbar-button primary-button" disabled={restartDisabled || pending} onClick={onRestart}><RotateCw size={16}/> Restart now</button> : state.status === 'downloading' ? <button className="toolbar-button" disabled><LoaderCircle size={16} className="spinning"/> Downloading…</button> : state.available ? <button className="toolbar-button primary-button" disabled={pending} onClick={onDownload}><Download size={16}/> Download update</button> : <button className="toolbar-button" disabled={pending} onClick={onCheck}><RefreshCw size={16} className={state.status === 'checking' ? 'spinning' : ''}/> {state.status === 'checking' ? 'Checking…' : 'Check for updates'}</button>}
+        {state.downloaded && !state.available ? <button className="toolbar-button primary-button" disabled={restartDisabled || pending} onClick={onRestart}><RotateCw size={16}/> Restart now</button> : state.status === 'downloading' ? <button className="toolbar-button" disabled><LoaderCircle size={16} className="spinning"/> Downloading…</button> : state.available ? <button className="toolbar-button primary-button" disabled={pending} onClick={onDownload}><Download size={16}/>{state.downloaded ? ' Replace staged update' : ' Download update'}</button> : <button className="toolbar-button" disabled={pending} onClick={onCheck}><RefreshCw size={16} className={state.status === 'checking' ? 'spinning' : ''}/> {state.status === 'checking' ? 'Checking…' : 'Check for updates'}</button>}
       </div>
     </div>
     {state.status === 'downloading' && <div className="update-download" role="status"><div className="update-progress-label"><span>Downloading Attune {state.latestVersion}</span><span>{Math.round(state.progress || 0)}%</span></div><progress aria-label="Update download progress" max={100} value={state.progress || 0}/></div>}
-    {state.downloaded && <div className="settings-note"><CheckCircle2 size={16}/><span>{restartDisabled ? 'Finish the current import or transfer before restarting.' : 'You can keep using Attune and restart later.'}</span></div>}
+    {state.downloaded && !state.available && <div className="settings-note"><CheckCircle2 size={16}/><span>{restartDisabled ? 'Finish the current import or transfer before restarting.' : 'You can keep using Attune and restart later.'}</span></div>}
     {state.error && <InlineBanner>{state.error}</InlineBanner>}
     {state.latestVersion && state.releaseNotes && <section className="update-release-notes" aria-label="Release notes"><h2>What’s new in {state.latestVersion}</h2><p>{state.releaseNotes}</p></section>}
   </section>
