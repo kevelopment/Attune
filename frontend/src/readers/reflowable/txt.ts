@@ -2,8 +2,8 @@ import type { ReaderAdapter, ReaderEvent, ReaderLocator, ReaderSearchHit, Reader
 
 const section: ReaderSection = { index: 0, id: 'text', title: 'Text' }
 const themes: Record<ReaderSettings['theme'], [string, string, string]> = {
-  light: ['#fff', '#2d2d31', '#4667bb'],
-  dark: ['#1c1d20', '#e9e6df', '#a6baff'],
+  light: ['#fff', '#25262a', '#5278dc'],
+  dark: ['#232428', '#e6e6e8', '#89a5ff'],
   sepia: ['#f2eadb', '#40372c', '#715e48'],
   gray: ['#bcbcbc', '#303030', '#4e4e4e'],
   charcoal: ['#303030', '#ededed', '#c2c2c2'],

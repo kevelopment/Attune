@@ -105,6 +105,6 @@ export default function DropdownSelect({ label, value, options, onChange, classN
       {options.map((option, index) => <div key={option.value} id={`${id}-option-${index}`} data-index={index} role="option" aria-selected={option.value === value} className={`dropdown-select-option ${index === active ? 'active' : ''}`} onMouseEnter={() => setActive(index)} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}>
         <span>{option.label}</span>{option.value === value && <Check size={15} aria-hidden="true"/>}
       </div>)}
-    </div>, document.body)}
+    </div>, trigger.current?.closest<HTMLElement>('.reader-fullscreen') ?? document.body)}
   </>
 }
