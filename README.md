@@ -62,7 +62,7 @@ Download Attune for your operating system and CPU from the [Releases page](https
 | --- | --- |
 | macOS 13+ | DMG installer and updater ZIP |
 | Windows | ZIP archive |
-| Linux | Compressed application archive |
+| Linux | RPM or DEB installer, plus a compressed application archive |
 
 **macOS installation:**
 
@@ -70,7 +70,7 @@ Download Attune for your operating system and CPU from the [Releases page](https
 2. If Gatekeeper says “Apple could not verify Attune,” choose **Done**, then open **System Settings → Privacy & Security** and select **Open Anyway** for Attune.
 3. Choose **Open** in the confirmation prompt. See [Apple’s instructions](https://support.apple.com/en-us/102445) for details. Current macOS downloads are ad-hoc signed and not Apple-notarized, so this may be needed on first launch.
 
-Windows downloads are not Authenticode-signed. Linux requires GTK 3, WebKit2GTK 4.1, and libmtp runtime libraries; Windows requires WebView2. See the [release guide](docs/releasing.md) for installation and device requirements.
+Windows downloads are not Authenticode-signed. Linux packages include an application launcher and ask the system package manager to install GTK 3, WebKit2GTK 4.1, libmtp, and C runtime dependencies during installation. Fedora Asahi users should choose the ARM64 RPM. The Linux app uses system GTK/WebKit libraries, so the native packages resolve those runtime dependencies instead of bundling them into the Go executable. Windows requires WebView2. See the [release guide](docs/releasing.md) for installation and device requirements.
 
 ## Software updates
 

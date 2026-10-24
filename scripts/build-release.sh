@@ -85,13 +85,14 @@ elif [ "$goos" = linux ]; then
   cp build/bin/Attune "$stage/Attune"
   cp "$helper" "$stage/kindling-cli"
   chmod 755 "$stage/Attune" "$stage/kindling-cli"
-  cat > "$stage/INSTALL.txt" <<'EOF'
-Attune Linux amd64 (experimental)
+  cat > "$stage/INSTALL.txt" <<EOF
+Attune Linux $goarch (experimental)
 
 Run ./Attune. This build requires GTK 3, WebKit2GTK 4.1, and libmtp runtime libraries.
 MTP access may require a udev rule granting your account permission to the reader. Close other MTP clients if a reader is busy. USB mass-storage discovery, transfer, and eject need lsblk, udisksctl, and UDisks/polkit permissions. Hardware validation is limited; ensure storage readers are mounted before transferring.
 EOF
   tar -czf "dist/Attune-linux-$goarch.tar.gz" -C build/release "Attune-$goos-$goarch"
+  scripts/package-linux.sh "$VERSION" "$goarch" "$stage"
 else
   echo "scripts/build-release.sh supports macOS and Linux; use scripts/build-release.ps1 on Windows" >&2
   exit 1

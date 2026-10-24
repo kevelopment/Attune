@@ -1,11 +1,12 @@
 #!/bin/sh
-# Pinned official Kindling v0.45.6 release assets. Keep hashes in sync with
-# third_party/kindling/README.md and update only after verifying upstream.
+# Pinned Kindling v0.45.6 source and official release assets. Keep hashes in
+# sync with third_party/kindling/README.md and verify upstream before changes.
 kindling_asset() {
   case "$1/$2" in
     darwin/arm64) printf '%s\n' 'kindling-cli-mac-apple-silicon' ;;
     darwin/amd64) printf '%s\n' 'kindling-cli-mac-intel' ;;
     linux/amd64) printf '%s\n' 'kindling-cli-linux' ;;
+    linux/arm64) printf '%s\n' 'source-v0.45.6' ;;
     windows/amd64) printf '%s\n' 'kindling-cli-windows.exe' ;;
     *) echo "unsupported Kindling platform: $1/$2" >&2; return 1 ;;
   esac
