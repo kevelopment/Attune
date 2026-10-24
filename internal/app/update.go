@@ -16,7 +16,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-var appVersion = "0.0.15"
+var appVersion = "0.0.16"
 var updateEnabled = "false"
 
 type UpdateState struct {
@@ -169,7 +169,7 @@ func (a *App) DownloadUpdate() (UpdateState, error) {
 		return a.setUpdateError(err)
 	}
 	libraryPath := a.configuredLibraryPath()
-	if err = updater.PreflightTarget(target, libraryPath, goos); err != nil {
+	if err = updater.PreflightTarget(target, libraryPath, goos); err != nil && !(goos == "linux" && errors.Is(err, os.ErrPermission)) {
 		return a.setUpdateError(err)
 	}
 	cache, err := os.UserCacheDir()
