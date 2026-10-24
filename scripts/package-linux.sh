@@ -58,7 +58,7 @@ EOF
 dpkg-deb --build --root-owner-group "$deb_root" "dist/Attune-linux-$arch-$version.deb"
 
 rpm_top="$work/rpmbuild"
-mkdir -p "$rpm_top"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+mkdir -p "$rpm_top/BUILD" "$rpm_top/BUILDROOT" "$rpm_top/RPMS" "$rpm_top/SOURCES" "$rpm_top/SPECS" "$rpm_top/SRPMS"
 tar -C "$root" -czf "$rpm_top/SOURCES/attune-files.tar.gz" .
 rpm_version=$(printf '%s' "$version" | sed 's/-/~/')
 cat > "$rpm_top/SPECS/attune.spec" <<EOF
