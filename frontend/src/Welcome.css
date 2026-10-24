@@ -34,5 +34,6 @@
 html:has(.welcome-shell.preview-mode),html:has(.welcome-shell.preview-mode) body,.welcome-shell.preview-mode{background:#e9e8e5!important}
 @media(max-width:620px){.welcome-shell{padding:14px}.welcome-panel{padding:22px}.welcome-choice{align-items:flex-start;flex-wrap:wrap}.welcome-choice>.welcome-button{margin-left:50px}.welcome-library-list,.welcome-import-actions,.welcome-import-result,.welcome-inline-error{margin-left:0}.welcome-intro h1{font-size:1.75rem}}
 @media(prefers-color-scheme:dark){.welcome-panel{box-shadow:0 18px 50px #0005}.welcome-primary{color:#fff}}
+@media(prefers-color-scheme:dark){.welcome-app-icon{box-shadow:0 2px 12px #0005}.welcome-choice{border-color:var(--line-strong)}.welcome-library{border-color:var(--line-strong)}}
 @media(prefers-color-scheme:dark){html:has(.welcome-shell.preview-mode),html:has(.welcome-shell.preview-mode) body,.welcome-shell.preview-mode{background:#35363a!important}}
 @media(prefers-reduced-motion:reduce){.welcome-button,.welcome-text-button{scroll-behavior:auto}}

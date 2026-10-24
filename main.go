@@ -5,12 +5,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 
 	"attune/internal/updater"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
@@ -28,6 +30,8 @@ func main() {
 	err := wails.Run(&options.App{
 		Title: "Attune", Width: 1240, Height: 820, MinWidth: 900, MinHeight: 600,
 		BackgroundColour: options.NewRGBA(0, 0, 0, 0),
+		Frameless:        runtime.GOOS == "linux",
+		Linux:            &linux.Options{WindowIsTranslucent: runtime.GOOS == "linux"},
 		AssetServer: &assetserver.Options{Assets: assets, Middleware: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasPrefix(r.URL.Path, "/book-archives/") {
