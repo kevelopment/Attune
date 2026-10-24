@@ -65,7 +65,9 @@ async function start() {
   await freePort(port)
   await freePort(34115)
   const log = fs.openSync(logFile, 'w', 0o600)
-  const child = spawn(binary, ['dev', '-s', '-wailsjsdir', path.join(state, 'bindings'), '-devserver', '127.0.0.1:34115', '-frontenddevserverurl', `http://127.0.0.1:${port}`], {
+  const wailsArgs = ['dev', '-s', '-wailsjsdir', path.join(state, 'bindings'), '-devserver', '127.0.0.1:34115', '-frontenddevserverurl', `http://127.0.0.1:${port}`]
+  if (process.platform === 'linux') wailsArgs.push('-tags', 'webkit2_41')
+  const child = spawn(binary, wailsArgs, {
     cwd: root, detached: true, stdio: ['ignore', log, log], env: process.env,
   })
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })

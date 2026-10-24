@@ -231,3 +231,114 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 @media(prefers-color-scheme:dark){.device-profile-warning{color:#d3b77d}.device-profile-note{border-color:#374364;background:#252c3e;color:#bbc8ec}.device-folder-field textarea{background:#202125;border-color:#414247;color:#eeeef0}.device-format-field{border-color:#3a3b40}.device-format-field legend{color:#e2e2e5}}
 @media(max-width:560px){.device-format-options{grid-template-columns:repeat(3,minmax(0,1fr))}.device-preference-actions{flex-wrap:wrap}.device-preference-actions .device-reset{width:100%;text-align:left}}
 .reader-engine-surface{position:absolute;inset:0;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}.reader-engine-message{position:absolute;z-index:3;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;background:color-mix(in srgb,var(--reader-bg) 90%,transparent);color:var(--reader-ink)}.reader-engine-message.preview-error{color:var(--danger,#b42318)}.reader-fit-dropdown{min-width:112px}.reader-fit-dropdown .dropdown-select-trigger{min-width:112px}
+
+/* Keep Linux content opaque while leaving the outer window corners transparent. */
+:root { color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { color-scheme: dark; } }
+html.linux-webview,
+html.linux-webview body,
+html.linux-webview #root {
+	background: transparent !important;
+}
+
+html.linux-webview body {
+	overflow: hidden;
+}
+
+html.linux-webview #root {
+	height: 100vh;
+	border-radius: 16px;
+	overflow: hidden;
+}
+
+html.linux-webview .app-shell,
+html.linux-webview .welcome-shell {
+  background: var(--shell) !important;
+  border-radius: 16px;
+}
+
+html.linux-webview .welcome-shell {
+  --wails-draggable: drag;
+}
+
+.linux-onboarding-controls {
+  position: fixed;
+  z-index: 100;
+  top: 8px;
+  right: 10px;
+}
+
+.linux-onboarding-controls .linux-window-controls {
+  margin: 0;
+}
+
+html.linux-webview .sidebar,
+html.linux-webview .topbar {
+  background: var(--shell) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.linux-webview *,
+html.linux-webview *::before,
+html.linux-webview *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.linux-webview .tile-more,
+html.linux-webview .select-hit {
+  background: var(--surface) !important;
+}
+
+html.linux-webview .drop-overlay,
+html.linux-webview .transfer-toast,
+html.linux-webview .toast {
+  background: var(--panel) !important;
+}
+
+html.linux-webview .sidebar {
+  padding-top: 12px;
+}
+
+html.linux-webview .topbar-leading {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.linux-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  flex: none;
+}
+
+.linux-window-control {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  --wails-draggable: no-drag;
+}
+
+.linux-window-control:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.linux-window-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.linux-window-control.linux-window-close:hover {
+  background: #d94a4a;
+  color: #fff;
+}

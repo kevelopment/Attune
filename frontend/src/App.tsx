@@ -4,7 +4,7 @@ import {
   BookOpen, LibraryBig, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
   CircleHelp, FolderOpen, Upload, Download, LoaderCircle, PanelRightClose, ImagePlus,
-  Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Type, ChevronDown, ChevronLeft, ChevronRight,
+  Maximize2, Minimize2, Minus, Square, Copy, PanelLeftClose, PanelLeftOpen, Type, ChevronDown, ChevronLeft, ChevronRight,
   Bookmark, BookmarkPlus, Columns2, AlignLeft, Trash,
 } from 'lucide-react'
 import { bridge, progressFromEvent } from './bridge'
@@ -59,6 +59,8 @@ function formatAddedTime(timestamp: number) {
 
 export default function App() {
   const updater = useUpdater()
+  const linuxDesktop = !bridge.preview && document.documentElement.classList.contains('linux-webview')
+  const [windowMaximized, setWindowMaximized] = useState(false)
   const [state, setState] = useState<AppState | null>(null)
   const [onboarding, setOnboarding] = useState<{ required: boolean; libraries: CalibreLocation[] } | null>(null)
   const [onboardingError, setOnboardingError] = useState('')
@@ -109,6 +111,17 @@ export default function App() {
   const { entries, begin, update: updateActivity, remove: removeActivity } = useActivityLog()
   const updateActivityID = useRef<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!linuxDesktop || !window.runtime?.WindowIsMaximised) return
+    const syncMaximized = () => {
+      const status = window.runtime?.WindowIsMaximised?.()
+      if (status) void status.then(setWindowMaximized).catch(() => {})
+    }
+    syncMaximized()
+    window.addEventListener('resize', syncMaximized)
+    return () => window.removeEventListener('resize', syncMaximized)
+  }, [linuxDesktop])
   const coverInputRef = useRef<HTMLInputElement>(null)
   const coverTarget = useRef<Book | null>(null)
   const importGuard = useRef(false)
@@ -656,9 +669,16 @@ export default function App() {
   const detailsVisible = !readerOpen && page !== 'settings' && page !== 'updates'
   const detailsOpen = detailsVisible && !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
+  const linuxWindowControls = linuxDesktop && <div className="linux-window-controls" aria-label="Window controls">
+    <button className="linux-window-control" title="Minimize" aria-label="Minimize window" onClick={() => window.runtime?.WindowMinimise?.()}><Minus size={15}/></button>
+    <button className="linux-window-control" title={windowMaximized ? 'Restore' : 'Maximize'} aria-label={windowMaximized ? 'Restore window' : 'Maximize window'} onClick={() => window.runtime?.WindowToggleMaximise?.()}>{windowMaximized ? <Copy size={13}/> : <Square size={13}/>}</button>
+    <button className="linux-window-control linux-window-close" title="Close" aria-label="Close window" onClick={() => window.runtime?.Quit?.()}><X size={15}/></button>
+  </div>
   if (!onboarding || onboarding.required || onboardingError) {
-    if (!onboarding && !onboardingError) return <main className={`welcome-shell ${bridge.preview ? 'preview-mode' : ''}`}><section className="welcome-panel" role="status"><img className="welcome-app-icon" src="/attune.svg" alt=""/><h1 id="welcome-title">Attune your library.</h1><p>Checking your library setup…</p></section></main>
-    return <Welcome libraries={onboarding?.libraries ?? []} error={onboardingError || undefined} onRetry={() => void loadOnboarding()} onScan={() => bridge.findCalibreLibraries(true)} onComplete={completeOnboarding} onImport={importCalibreAt} onBrowse={importCalibreLibrary} preview={bridge.preview}/>
+    const welcomeScreen = !onboarding && !onboardingError
+      ? <main className={`welcome-shell ${bridge.preview ? 'preview-mode' : ''}`}><section className="welcome-panel" role="status"><img className="welcome-app-icon" src="/attune.svg" alt=""/><h1 id="welcome-title">Attune your library.</h1><p>Checking your library setup…</p></section></main>
+      : <Welcome libraries={onboarding?.libraries ?? []} error={onboardingError || undefined} onRetry={() => void loadOnboarding()} onScan={() => bridge.findCalibreLibraries(true)} onComplete={completeOnboarding} onImport={importCalibreAt} onBrowse={importCalibreLibrary} preview={bridge.preview}/>
+    return <>{linuxDesktop && <div className="linux-onboarding-controls">{linuxWindowControls}</div>}{welcomeScreen}</>
   }
   return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
@@ -686,6 +706,7 @@ export default function App() {
       </div>
       <div className="top-actions">
         {readerOpen && previewTarget ? <button className="toolbar-button" title="Close reader" onClick={() => { setReaderOpen(false); setPreviewTarget(null); setBookPreview(null) }}><X size={16}/><span>Close</span></button> : <>{page === 'device' && device && <button className="toolbar-button" title="Refresh reader contents" onClick={() => deviceRefreshRef.current()}><RefreshCw size={16}/><span>Refresh</span></button>}{page !== 'settings' && page !== 'updates' && <button className="toolbar-button primary-button" onClick={() => void beginImport()} disabled={busy || transferActive}><Plus size={17}/><span>Import books</span></button>}</>}
+        {linuxWindowControls}
       </div>
     </header>
 

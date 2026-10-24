@@ -73,6 +73,7 @@ func NewApp() *App {
 }
 
 func (a *App) startup(ctx context.Context) {
+	configureLinuxAppearance()
 	followSystemAppIcon()
 	a.core.Startup(ctx)
 }
