@@ -6,22 +6,23 @@ The first stable release was `v0.0.1`. Older alpha releases remain available in 
 
 ## Release targets
 
-Release packages include native builds for four platform targets, light and dark macOS icons, a drag-to-Applications DMG, and updater archives. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
+Release packages include native builds for five platform targets, light and dark macOS icons, a drag-to-Applications DMG, and updater archives. Draft releases are not visible to the in-app updater or public until manually published. Physical-device behavior remains experimental and has not been validated on every platform.
 
 | Runner target | Download | Scope |
 | --- | --- | --- |
 | macOS, Apple Silicon | `Attune-macos-arm64-0.0.5.dmg` and `Attune-macos-arm64-0.0.5.zip` | DMG installer and updater package |
 | macOS, Intel | `Attune-macos-amd64-0.0.5.dmg` and `Attune-macos-amd64-0.0.5.zip` | Same feature scope; separate CPU build |
 | Windows, x64 | `Attune-windows-amd64-0.0.5.zip` | Library, preview, updater, experimental USB Kindle management |
-| Linux, x64 | `Attune-linux-amd64-0.0.5.tar.gz` | Library, preview, updater, experimental USB Kindle management |
+| Linux, x64 | `Attune-linux-amd64-0.0.5.rpm`, `.deb`, and `.tar.gz` | Native package and portable archive |
+| Linux, ARM64 | `Attune-linux-arm64-0.0.5.rpm`, `.deb`, and `.tar.gz` | Native package and portable archive; RPM is intended for Fedora Asahi |
 
-`SHA256SUMS.txt` accompanies all downloadable packages. The macOS DMG contains `Attune.app` and an Applications shortcut; drag the app to Applications to install it. The ZIP remains available for the in-app updater. Windows and Linux packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux.
+`SHA256SUMS.txt` accompanies all downloadable packages. The macOS DMG contains `Attune.app` and an Applications shortcut; drag the app to Applications to install it. The ZIP remains available for the in-app updater. Windows and Linux archive packages keep the executable and helper together. Do not move the application executable out of its extracted directory on Windows or Linux. Linux RPM and DEB packages install the application, Kindling helper, licenses, and desktop launcher. Their package metadata asks Fedora or Debian-family package managers to install GTK 3, WebKit2GTK 4.1, libmtp, and the C runtime automatically.
 
 The macOS release build uses the pinned, build-only Python packages in `scripts/requirements-macos-dmg.txt` to create the Finder layout and animated background. Python is not required to install or run Attune.
 
 Each package includes these files in its `licenses/` directory; the macOS app stores them at `Attune.app/Contents/Resources/licenses/`: `Attune-LICENSE.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES.txt`, `Kindling-LICENSE.txt`, and `Kindling-THIRD_PARTY_LICENSES.txt`.
 
-Linux packages are built on Ubuntu 24.04 with GTK3 and WebKit2GTK 4.1. They require compatible runtime libraries on the receiving machine; they are not self-contained AppImages. Windows requires the WebView2 runtime. Platform build prerequisites are described in the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation).
+Linux packages are built on native Ubuntu 24.04 x64 and ARM64 runners with GTK3 and WebKit2GTK 4.1. The DEB targets Ubuntu 24.04 or a compatible Debian-family distribution, and the RPM targets Fedora-compatible distributions. They are native packages, not self-contained bundles: the package manager resolves their GTK, WebKitGTK, libmtp, and C runtime requirements during installation. Windows requires the WebView2 runtime. Platform build prerequisites are described in the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation).
 
 ## Build artifacts without a release
 
