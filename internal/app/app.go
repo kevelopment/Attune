@@ -383,8 +383,9 @@ func (a *App) importCalibreLibrary(root string) (model.ImportResult, error) {
 	return result, nil
 }
 
-func (a *App) importCalibreRecord(root string, item calibre.Book, batchID string) (string, bool, []string, error) {
-	issues := make([]string, 0)
+func (a *App) importCalibreRecord(root string, item calibre.Book, batchID string) (bookID string, duplicate bool, issues []string, err error) {
+	defer recoverImportPanic("Calibre record "+item.ID, &err)
+	issues = make([]string, 0)
 	libraryUUID := strings.TrimSpace(item.LibraryUUID)
 	if libraryUUID == "" {
 		abs, err := filepath.Abs(root)
@@ -406,7 +407,7 @@ func (a *App) importCalibreRecord(root string, item calibre.Book, batchID string
 	if err != nil {
 		return "", false, issues, err
 	}
-	duplicate := mapped
+	duplicate = mapped
 	if !mapped {
 		matches := make(map[string]bool)
 		for _, asset := range item.Assets {
@@ -508,6 +509,12 @@ func readCalibreCover(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(data) > 32<<20 {
+		return nil, errors.New("cover exceeds the 32 MiB size limit")
+	}
+	if _, _, err = library.ValidateCover(data); err != nil {
+		return nil, fmt.Errorf("invalid cover: %w", err)
+	}
 	return data, nil
 }
 
@@ -560,7 +567,9 @@ func (a *App) ImportPaths(paths []string) (model.ImportResult, error) {
 	for i, p := range paths {
 		filename := filepath.Base(p)
 		emitProgress(model.ImportProgress{Current: i, Total: total, Filename: filename, Imported: result.Imported, Duplicates: result.Duplicates, Failed: failed, Stage: "importing"})
-		book, duplicate, err := a.store.ImportFileInBatch(p, batchID)
+		book, duplicate, err := importFileSafely(p, func() (model.Book, bool, error) {
+			return a.store.ImportFileInBatch(p, batchID)
+		})
 		if err != nil {
 			result.Errors = append(result.Errors, filepath.Base(p)+": "+err.Error())
 			failed++

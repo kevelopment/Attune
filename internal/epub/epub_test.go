@@ -50,6 +50,24 @@ func TestDeclareReplacementCoverKeepsOPFNamespacesAndAttributes(t *testing.T) {
 	}
 }
 
+func TestParseRejectsOversizedArchiveBeforeOpeningZIP(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "oversized.epub")
+	file, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Truncate(MaxArchiveSize + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Parse(filename); err == nil || !strings.Contains(err.Error(), "256 MiB") {
+		t.Fatalf("Parse oversized archive error = %v, want the archive size limit", err)
+	}
+}
+
 func TestDeclareReplacementCoverUsesEPUB2CoverMetadata(t *testing.T) {
 	input := []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Title</dc:title></metadata><manifest/><spine/></package>`)
 	output, err := declareReplacementCover(input, "attune-cover-override", "cover.jpg", "image/jpeg")
