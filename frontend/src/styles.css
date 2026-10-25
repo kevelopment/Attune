@@ -50,8 +50,7 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 .history-button{width:32px;height:32px;min-width:32px;flex:0 0 32px;display:grid;place-items:center;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);cursor:pointer}
 .history-button:hover:not([aria-disabled=true]){background:var(--surface-hover);color:var(--text)}
 .history-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.history-button[aria-disabled=true]{border-color:var(--line);background:var(--surface-soft);color:var(--muted);cursor:default}
-html.linux-webview .history-button[aria-disabled=true]{border-color:var(--line-strong);background:var(--surface-soft);color:var(--text);opacity:1}
+.history-button[aria-disabled=true]{color:var(--muted);opacity:.7;cursor:default}
 .topbar .toolbar-button{height:32px}
 .search-box input:focus,.search-box input:focus-visible{outline:none;box-shadow:none}
 .topbar{grid-column:1/-1;margin-right:-12px;padding:0 12px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px}
@@ -305,7 +304,7 @@ html.linux-webview .toast {
 }
 
 html.linux-webview .topbar-leading {
-  padding-left: 12px;
+  padding-left: 0;
   padding-right: 12px;
 }
 
