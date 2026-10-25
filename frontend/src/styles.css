@@ -47,9 +47,9 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 
 .topbar-navigation{height:32px;display:flex;align-items:center;gap:4px;flex:none}
 .topbar-navigation,.topbar-navigation *{--wails-draggable:no-drag}
-.history-button{width:32px;height:32px;display:grid;place-items:center;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);cursor:pointer}
+.history-button{width:32px;height:32px;min-width:32px;flex:0 0 32px;display:grid;place-items:center;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);cursor:pointer}
 .history-button:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
-.history-button:disabled{opacity:.38;cursor:default}
+.history-button:disabled{opacity:.7;cursor:default}
 .topbar .toolbar-button{height:32px}
 .search-box input:focus,.search-box input:focus-visible{outline:none;box-shadow:none}
 .topbar{grid-column:1/-1;margin-right:-12px;padding:0 12px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px}
