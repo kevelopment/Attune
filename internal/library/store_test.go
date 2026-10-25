@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,6 +34,21 @@ func jpegCover(t *testing.T) []byte {
 	}
 	var encoded bytes.Buffer
 	if err := jpeg.Encode(&encoded, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
+}
+
+func pngCover(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 24, 36))
+	for y := 0; y < 36; y++ {
+		for x := 0; x < 24; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 8), G: uint8(y * 5), B: 70, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
 		t.Fatal(err)
 	}
 	return encoded.Bytes()
@@ -65,7 +81,39 @@ func fixtureEPUB(t *testing.T, filename, title string) {
 		"mimetype":               "application/epub+zip",
 		"META-INF/container.xml": `<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
 		"OPS/package.opf":        `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + title + `</dc:title><dc:creator>Author One</dc:creator><dc:creator>Author Two</dc:creator><dc:publisher>Fixture Publisher</dc:publisher><dc:date>2023-02</dc:date><dc:identifier scheme="ISBN">9780000000002</dc:identifier><dc:description>Fixture description</dc:description><dc:language>en</dc:language><dc:subject>Fiction</dc:subject><dc:subject>Mystery</dc:subject><meta name="calibre:series" content="Fixture Series"/><meta name="calibre:series_index" content="4"/><meta name="calibre:pages" content="123"/><meta name="cover" content="cover"/></metadata><manifest><item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/></manifest><spine/></package>`,
-		"OPS/cover.png":          "cover-bytes",
+	}
+	entries["OPS/cover.png"] = string(pngCover(t))
+	for name, content := range entries {
+		entry, e := w.Create(name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = entry.Write([]byte(content)); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fixtureEPUBWithoutAuthor(t *testing.T, filename string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := zip.NewWriter(f)
+	entries := map[string]string{
+		"mimetype":               "application/epub+zip",
+		"META-INF/container.xml": `<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>`,
+		"OPS/package.opf":        `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Untitled without author</dc:title></metadata><manifest/><spine/></package>`,
 	}
 	for name, content := range entries {
 		entry, e := w.Create(name)
@@ -81,6 +129,45 @@ func fixtureEPUB(t *testing.T, filename, title string) {
 	}
 	if err = f.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestImportEPUBWithoutAuthorStoresSafeArraysAndReadsLegacyNull(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(t.TempDir(), "no-author.epub")
+	fixtureEPUBWithoutAuthor(t, source)
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	book, duplicate, err := s.ImportEPUB(source)
+	if err != nil || duplicate {
+		t.Fatalf("ImportEPUB = duplicate %v, error %v", duplicate, err)
+	}
+	if book.Authors == nil || len(book.Authors) != 0 {
+		t.Fatalf("imported authors = %#v, want a non-nil empty array", book.Authors)
+	}
+	var storedAuthors string
+	if err = s.db.QueryRow(`SELECT authors FROM books WHERE id=?`, book.ID).Scan(&storedAuthors); err != nil {
+		t.Fatal(err)
+	}
+	if storedAuthors != "[]" {
+		t.Fatalf("stored authors JSON = %q, want []", storedAuthors)
+	}
+
+	// Older releases stored a missing creator list as JSON null. Loading such a
+	// record must still return an array because the frontend joins this field.
+	if _, err = s.db.Exec(`UPDATE books SET authors='null', subjects='null' WHERE id=?`, book.ID); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.GetBook(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Authors == nil || len(legacy.Authors) != 0 || legacy.Subjects == nil || len(legacy.Subjects) != 0 {
+		t.Fatalf("legacy arrays = authors %#v, subjects %#v; want non-nil empty arrays", legacy.Authors, legacy.Subjects)
 	}
 }
 
@@ -116,7 +203,7 @@ func TestImportEditDuplicateAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data, e := os.ReadFile(cover); e != nil || string(data) != "cover-bytes" {
+	if data, e := os.ReadFile(cover); e != nil || !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
 		t.Fatalf("cover read: %q, %v", data, e)
 	}
 	edited, err := s.UpdateBook(b.ID, "Edited", []string{"A New Author"})

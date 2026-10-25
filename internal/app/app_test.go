@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -41,9 +42,56 @@ func writeTestEPUB(t *testing.T, path, title string) {
 		"mimetype":               "application/epub+zip",
 		"META-INF/container.xml": `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>`,
 		"OPS/book.opf":           `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + title + `</dc:title><dc:creator id="creator">Writer</dc:creator><dc:publisher>Library Publisher</dc:publisher><dc:date>2022-04</dc:date><dc:identifier scheme="ISBN">9780000000001</dc:identifier><dc:description>Library description</dc:description><dc:language>en</dc:language><meta refines="#creator" property="file-as">Writer, One</meta><meta name="calibre:series" content="Series"/><meta name="calibre:series_index" content="2"/><meta name="calibre:title_sort" content="Title, Library"/><meta name="calibre:pages" content="309"/><meta name="cover" content="cover"/></metadata><manifest><item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="style" href="book.css" media-type="text/css"/></manifest><spine><itemref idref="chapter"/></spine></package>`,
-		"OPS/cover.png":          "\x89PNG\r\n\x1a\nTEST IMAGE",
 		"OPS/chapter.xhtml":      `<html><head><title>Preview Chapter</title><link rel="stylesheet" href="book.css"><script>alert(1)</script></head><body><h1 onclick="bad()">Safe text</h1><a href="https://remote.test/redirect">external</a></body></html>`,
 		"OPS/book.css":           `body{color:#222}`,
+	}
+	entries["OPS/cover.png"] = string(testPNGCover(t))
+	for name, content := range entries {
+		entry, e := w.Create(name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = entry.Write([]byte(content)); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testPNGCover(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 24, 36))
+	for y := 0; y < 36; y++ {
+		for x := 0; x < 24; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 8), G: uint8(y * 5), B: 70, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
+}
+
+func writeTestEPUBWithoutAuthor(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := zip.NewWriter(f)
+	entries := map[string]string{
+		"mimetype":               "application/epub+zip",
+		"META-INF/container.xml": `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>`,
+		"OPS/book.opf":           `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Untitled without author</dc:title></metadata><manifest/><spine/></package>`,
 	}
 	for name, content := range entries {
 		entry, e := w.Create(name)
@@ -59,6 +107,58 @@ func writeTestEPUB(t *testing.T, path, title string) {
 	}
 	if err = f.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestImportEPUBWithoutAuthorKeepsAuthorsArraySafe(t *testing.T) {
+	a := testApp(t)
+	defer a.store.Close()
+	source := filepath.Join(t.TempDir(), "no-author.epub")
+	writeTestEPUBWithoutAuthor(t, source)
+
+	result, err := a.ImportPaths([]string{source})
+	if err != nil || result.Imported != 1 || len(result.BookIDs) != 1 {
+		t.Fatalf("import = %#v, %v", result, err)
+	}
+	state, err := a.GetState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Books) != 1 || state.Books[0].Authors == nil || len(state.Books[0].Authors) != 0 {
+		t.Fatalf("book authors = %#v, want a non-nil empty array", state.Books)
+	}
+}
+
+func TestImportPathsContinuesAfterMalformedEPUB(t *testing.T) {
+	a := testApp(t)
+	defer a.store.Close()
+	root := t.TempDir()
+	malformed := filepath.Join(root, "broken.epub")
+	if err := os.WriteFile(malformed, []byte("not a zip archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valid := filepath.Join(root, "no-author.epub")
+	writeTestEPUBWithoutAuthor(t, valid)
+
+	result, err := a.ImportPaths([]string{malformed, valid})
+	if err != nil || result.Imported != 1 || len(result.Errors) != 1 || len(result.BookIDs) != 1 {
+		t.Fatalf("import result = %#v, error = %v", result, err)
+	}
+	state, err := a.GetState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Books) != 1 || state.Books[0].Authors == nil {
+		t.Fatalf("library after partial import = %#v", state.Books)
+	}
+}
+
+func TestImportFileSafelyTurnsPanicsIntoPerFileErrors(t *testing.T) {
+	_, duplicate, err := importFileSafely("malformed.epub", func() (model.Book, bool, error) {
+		panic("unexpected parser failure")
+	})
+	if err == nil || duplicate {
+		t.Fatalf("panic recovery returned duplicate=%t, error=%v", duplicate, err)
 	}
 }
 

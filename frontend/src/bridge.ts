@@ -1,6 +1,84 @@
-import type { AppState, Book, BookMetadataEdit, BookPreview, Device, DeviceBook, DevicePreferences, ImportResult, Progress, ImportProgress, UpdateState, ReadingProgress, ReadingBookmark, ReaderLocation } from './types'
+import type { AppState, Book, BookFile, BookMetadataEdit, BookPreview, Device, DeviceBook, DevicePreferences, ImportResult, Progress, ImportProgress, UpdateState, ReadingProgress, ReadingBookmark, ReaderLocation } from './types'
 
 export type ReaderAnnotation = { id: string; bookId: string; assetId?: string; format?: string; kind: string; text?: string; note?: string; quote?: string; cfi?: string; timestamp?: string; status: 'placed' | 'unplaced' }
+
+type DataRecord = Record<string, unknown>
+function record(value: unknown): DataRecord | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as DataRecord : null
+}
+function safeString(value: unknown, fallback = ''): string { return typeof value === 'string' ? value : fallback }
+function safeNumber(value: unknown, fallback = 0): number { return typeof value === 'number' && Number.isFinite(value) ? value : fallback }
+function safeStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+function safeStringMap(value: unknown): Record<string, string> {
+  const source = record(value)
+  return source ? Object.fromEntries(Object.entries(source).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {}
+}
+function normalizeBookFile(value: unknown): BookFile | null {
+  const source = record(value)
+  if (!source || typeof source.id !== 'string' || !source.id) return null
+  return {
+    id: source.id, bookID: safeString(source.bookID), format: safeString(source.format), filename: safeString(source.filename),
+    relativePath: safeString(source.relativePath), sha256: safeString(source.sha256), size: Math.max(0, safeNumber(source.size)),
+    preferred: source.preferred === true, canRead: source.canRead === true, canTransfer: source.canTransfer === true, canConvert: source.canConvert === true,
+  }
+}
+function normalizeBook(value: unknown): Book | null {
+  const source = record(value)
+  if (!source || typeof source.id !== 'string' || !source.id) return null
+  const files = Array.isArray(source.files) ? source.files.map(normalizeBookFile).filter((file): file is BookFile => file !== null) : []
+  return {
+    id: source.id, title: safeString(source.title, 'Untitled book') || 'Untitled book', authors: safeStrings(source.authors),
+    language: safeString(source.language), sha256: safeString(source.sha256), coverURL: safeString(source.coverURL), subjects: safeStrings(source.subjects),
+    publisher: safeString(source.publisher), published: safeString(source.published), identifiers: safeStringMap(source.identifiers),
+    series: safeString(source.series), seriesIndex: safeString(source.seriesIndex), description: safeString(source.description),
+    authorSort: safeStrings(source.authorSort), titleSort: safeString(source.titleSort), pageCount: Math.max(0, safeNumber(source.pageCount)),
+    fileSize: Math.max(0, safeNumber(source.fileSize)), modifiedAt: safeString(source.modifiedAt), addedAt: safeString(source.addedAt),
+    importBatchID: safeString(source.importBatchID), files, preferredFileID: safeString(source.preferredFileID), customMetadata: source.customMetadata,
+    revision: Math.max(1, safeNumber(source.revision, 1)),
+  }
+}
+function normalizeDevice(value: unknown): Device | null {
+  const source = record(value)
+  if (!source || typeof source.id !== 'string' || !source.id) return null
+  return {
+    id: source.id, name: safeString(source.name, 'Reader'), root: safeString(source.root), freeBytes: Math.max(0, safeNumber(source.freeBytes)),
+    totalBytes: Math.max(0, safeNumber(source.totalBytes)), transport: safeString(source.transport), profileID: safeString(source.profileID),
+    bookFolders: safeStrings(source.bookFolders), transferFormats: safeStrings(source.transferFormats), allowEPUBToMOBI: source.allowEPUBToMOBI === true,
+    requiresExplicitSelection: source.requiresExplicitSelection === true,
+  }
+}
+function normalizeAppState(value: unknown): AppState {
+  const source = record(value) ?? {}
+  return {
+    books: Array.isArray(source.books) ? source.books.map(normalizeBook).filter((book): book is Book => book !== null) : [],
+    devices: Array.isArray(source.devices) ? source.devices.map(normalizeDevice).filter((device): device is Device => device !== null) : [],
+    converterReady: source.converterReady === true, converterVersion: safeString(source.converterVersion), libraryPath: safeString(source.libraryPath),
+  }
+}
+function normalizeImportResult(value: unknown): ImportResult {
+  const source = record(value) ?? {}
+  return {
+    imported: Math.max(0, safeNumber(source.imported)), duplicates: Math.max(0, safeNumber(source.duplicates)),
+    skipped: Math.max(0, safeNumber(source.skipped)), errors: safeStrings(source.errors), bookIDs: safeStrings(source.bookIDs),
+  }
+}
+function normalizeDeviceBooks(value: unknown): DeviceBook[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap(item => {
+    const source = record(item)
+    if (!source || typeof source.path !== 'string' || !source.path) return []
+    return [{
+      path: source.path, name: safeString(source.name), size: Math.max(0, safeNumber(source.size)), bookID: safeString(source.bookID),
+      canRead: source.canRead === true, title: safeString(source.title), authors: safeStrings(source.authors), language: safeString(source.language),
+      subjects: safeStrings(source.subjects), coverURL: safeString(source.coverURL), publisher: safeString(source.publisher), published: safeString(source.published),
+      identifiers: safeStringMap(source.identifiers), description: safeString(source.description), series: safeString(source.series),
+      seriesIndex: safeString(source.seriesIndex), authorSort: safeStrings(source.authorSort), titleSort: safeString(source.titleSort),
+      pageCount: Math.max(0, safeNumber(source.pageCount)), addedAt: safeString(source.addedAt), modifiedAt: safeString(source.modifiedAt),
+    }]
+  })
+}
 
 const isPreview = new URLSearchParams(location.search).has('preview') || new URLSearchParams(location.search).get('welcome') === '1' || (import.meta.env.DEV && import.meta.env.VITE_ATTUNE_PREVIEW === '1')
 const previewStateError = new URLSearchParams(location.search).get('state') === 'error'
@@ -56,7 +134,7 @@ export const bridge = {
     return [...previewCalibreLibraries, { path: '~/Documents/Reader Archive', name: 'Reader Archive' }]
   },
   async importCalibreLibraryAt(path: string): Promise<ImportResult> {
-    if (!isPreview) return api('ImportCalibreLibraryAt', path)
+    if (!isPreview) return normalizeImportResult(await api('ImportCalibreLibraryAt', path))
     await new Promise(resolve => window.setTimeout(resolve, 800))
     if (previewWelcome) previewState.books = previewBooks
     return { imported: 12, duplicates: 2, skipped: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
@@ -90,14 +168,15 @@ export const bridge = {
   },
   async getState(): Promise<AppState> {
     if (isPreview && previewStateError) throw new Error('Could not refresh library. Try again.')
-    return isPreview ? { ...previewState, books: [...previewState.books], devices: [...previewState.devices] } : api('GetState')
+    const value = isPreview ? { ...previewState, books: [...previewState.books], devices: [...previewState.devices] } : await api('GetState')
+    return normalizeAppState(value)
   },
   async importBooks(): Promise<ImportResult> {
-    if (!isPreview) return api('ImportBooks')
+    if (!isPreview) return normalizeImportResult(await api('ImportBooks'))
     return { imported: 2, duplicates: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
   },
   async importCalibreLibrary(): Promise<ImportResult> {
-    if (!isPreview) return api('ImportCalibreLibrary')
+    if (!isPreview) return normalizeImportResult(await api('ImportCalibreLibrary'))
     if (previewWelcome) previewState.books = previewBooks
     return { imported: 2, duplicates: 1, skipped: 1, errors: [], bookIDs: ['sample-0', 'sample-1'] }
   },
@@ -106,7 +185,7 @@ export const bridge = {
     return ['~/Downloads/Piranesi.epub', '~/Downloads/The Silent Library.epub']
   },
   async importPaths(paths: string[]): Promise<ImportResult> {
-    if (!isPreview) return api('ImportPaths', paths)
+    if (!isPreview) return normalizeImportResult(await api('ImportPaths', paths))
     let imported = 0
     let duplicates = 0
     const importBatchID = crypto.randomUUID()
@@ -211,9 +290,21 @@ export const bridge = {
     if (!isPreview) return api('ResetDevicePreferences', id)
     previewDevicePreferences.delete(id)
   },
-  async getDeviceBooks(id: string): Promise<DeviceBook[]> { return isPreview ? previewDeviceBooks : api('GetDeviceBooks', id) },
+  async getDeviceBooks(id: string): Promise<DeviceBook[]> {
+    return normalizeDeviceBooks(isPreview ? previewDeviceBooks : await api('GetDeviceBooks', id))
+  },
   async getBookPreview(id: string): Promise<BookPreview> {
-    if (!isPreview) return api('GetBookPreview', id)
+    if (!isPreview) {
+      const source = record(await api('GetBookPreview', id))
+      const book = normalizeBook(source?.book)
+      if (!source || !book) throw new Error('Attune returned invalid book data.')
+      const chapters = Array.isArray(source.chapters) ? source.chapters.flatMap(item => {
+        const chapter = record(item)
+        if (!chapter || typeof chapter.id !== 'string' || typeof chapter.href !== 'string') return []
+        return [{ id: chapter.id, title: safeString(chapter.title, 'Untitled chapter'), href: chapter.href }]
+      }) : []
+      return { book, chapters, fileID: safeString(source.fileID) }
+    }
     const book = previewState.books.find(candidate => candidate.id === id)
     if (!book) throw new Error('This book is no longer in your library.')
     return { book, chapters: [{ id: 'preview-chapter-1', title: 'Chapter One', href: '/preview/sample/chapter-1.xhtml' }, { id: 'preview-chapter-2', title: 'The next morning', href: '/preview/sample/chapter-2.xhtml' }, { id: 'preview-chapter-3', title: 'A small discovery', href: '/preview/sample/chapter-3.xhtml' }] }

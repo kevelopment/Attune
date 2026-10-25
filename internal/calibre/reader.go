@@ -122,23 +122,30 @@ func ReadLibrary(root string) ([]Book, error) {
 	}
 	books := make([]Book, 0, len(bases))
 	libraryUUID := readLibraryUUID(tx)
+	var libraryIssues []string
 	rawBooks, err := readRawBookRows(tx)
 	if err != nil {
-		return nil, fmt.Errorf("read Calibre raw metadata: %w", err)
+		rawBooks = map[int64]map[string]any{}
+		libraryIssues = append(libraryIssues, fmt.Sprintf("raw metadata unavailable: %v", err))
 	}
 	customValues, err := readCustomValues(tx)
 	if err != nil {
-		return nil, fmt.Errorf("read Calibre custom columns: %w", err)
+		customValues = map[int64][]map[string]any{}
+		libraryIssues = append(libraryIssues, fmt.Sprintf("custom columns unavailable: %v", err))
 	}
 	readingState, err := readReadingState(tx)
 	if err != nil {
-		return nil, fmt.Errorf("read Calibre reading state: %w", err)
+		readingState = map[int64]map[string][]map[string]any{}
+		libraryIssues = append(libraryIssues, fmt.Sprintf("reading state unavailable: %v", err))
 	}
 	for _, row := range bases {
 		if row.id < 1 {
 			continue
 		}
 		b := Book{ID: strconv.FormatInt(row.id, 10), LibraryUUID: libraryUUID}
+		for _, issue := range libraryIssues {
+			appendBookIssue(&b, issue)
+		}
 		if raw, ok := rawBooks[row.id]; ok {
 			b.UUID, _ = raw["uuid"].(string)
 			b.RawMetadata, _ = json.Marshal(raw)
@@ -160,14 +167,16 @@ func ReadLibrary(root string) ([]Book, error) {
 		if row.seriesIndex.Valid {
 			b.Metadata.SeriesIndex = row.seriesIndex.String
 		}
+		// Metadata tables are optional enrichment. A damaged relation or value
+		// for one book should not make the rest of the library unavailable.
 		if err = readBookMetadata(tx, row.id, &b); err != nil {
-			return nil, fmt.Errorf("read Calibre book %s metadata: %w", b.ID, err)
+			appendBookIssue(&b, fmt.Sprintf("metadata: %v", err))
 		}
 		if err = readPageCount(tx, row.id, &b); err != nil {
-			return nil, fmt.Errorf("read Calibre book %s page count: %w", b.ID, err)
+			appendBookIssue(&b, fmt.Sprintf("page count: %v", err))
 		}
 		if err = readBookAssets(absRoot, tx, row.id, row.bookPath.String, row.hasCover.Int64 != 0, &b); err != nil {
-			b.Issue = err.Error()
+			appendBookIssue(&b, fmt.Sprintf("formats: %v", err))
 		}
 		books = append(books, b)
 	}
@@ -175,6 +184,18 @@ func ReadLibrary(root string) ([]Book, error) {
 		return nil, fmt.Errorf("finish Calibre read snapshot: %w", err)
 	}
 	return books, nil
+}
+
+func appendBookIssue(book *Book, issue string) {
+	issue = strings.TrimSpace(issue)
+	if issue == "" {
+		return
+	}
+	if book.Issue == "" {
+		book.Issue = issue
+		return
+	}
+	book.Issue += "; " + issue
 }
 
 type queryer interface {

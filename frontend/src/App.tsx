@@ -34,6 +34,12 @@ type PasteMenu = { left: number; top: number } | null
 type DevicePreferencesDraft = DevicePreferences & { deviceID: string; deviceName: string; foldersText: string; requiresExplicitSelection: boolean }
 const deviceFormatOptions = ['epub', 'pdf', 'azw3', 'mobi', 'prc', 'azw', 'fb2', 'txt', 'cbz', 'cbr', 'rtf', 'doc', 'docx', 'odt', 'html', 'htmlz', 'pdb', 'lit', 'zip']
 const fmtBytes = (n: number) => n < 1_000 ? `${n} B` : n < 1_000_000 ? `${(n / 1_000).toFixed(0)} KB` : n < 1_000_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${(n / 1_000_000_000).toFixed(1)} GB`
+function bookAuthors(book: Pick<Book, 'authors'>): string[] {
+  return Array.isArray(book.authors) ? book.authors.filter((author): author is string => typeof author === 'string') : []
+}
+function bookSubjects(book: Pick<Book, 'subjects'>): string[] {
+  return Array.isArray(book.subjects) ? book.subjects.filter((subject): subject is string => typeof subject === 'string') : []
+}
 function bookCover(book: Book) {
   const url = bridge.previewCover(book.coverURL || `/covers/${book.id}`)
   return bridge.preview ? url : `${url}${url.includes('?') ? '&' : '?'}revision=${book.revision}`
@@ -234,11 +240,15 @@ export default function App() {
     const values = (key: 'authors' | 'subjects' | 'language') => {
       const found = items.flatMap(item => {
         const raw = item[key]
-        return (Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : []).map(x => x.trim()).filter(Boolean)
+        const candidates = Array.isArray(raw) ? raw : typeof raw === 'string' && raw ? [raw] : []
+        return candidates.filter((value): value is string => typeof value === 'string').map(value => value.trim()).filter(Boolean)
       })
       const missing = items.some(item => {
         const raw = item[key]
-        return Array.isArray(raw) ? raw.length === 0 : typeof raw !== 'string' || raw.trim() === ''
+        return !Array.isArray(raw) && (typeof raw !== 'string' || raw.trim() === '')
+      }) || items.some(item => {
+        const raw = item[key]
+        return Array.isArray(raw) && !raw.some(value => typeof value === 'string' && value.trim())
       })
       return { values: [...new Set(found)].sort((a, b) => a.localeCompare(b)), missing }
     }
@@ -250,9 +260,10 @@ export default function App() {
     const now = Date.now()
     const filtered = all.filter(b => {
       const timestamp = page === 'recent' ? Date.parse(b.addedAt) : 0
-      return (!needle || `${b.title} ${b.authors.join(' ')}`.toLowerCase().includes(needle)) && matchesFilter(b.authors, authorFilter) && matchesFilter(b.subjects, genreFilter) && matchesFilter(b.language ? [b.language] : [], languageFilter) && (page !== 'recent' || (Number.isFinite(timestamp) && timestamp >= now - recentWindowMs && timestamp <= now))
+      const authors = bookAuthors(b)
+      return (!needle || `${b.title} ${authors.join(' ')}`.toLowerCase().includes(needle)) && matchesFilter(authors, authorFilter) && matchesFilter(bookSubjects(b), genreFilter) && matchesFilter(b.language ? [b.language] : [], languageFilter) && (page !== 'recent' || (Number.isFinite(timestamp) && timestamp >= now - recentWindowMs && timestamp <= now))
     })
-    return filtered.sort((a, b) => page === 'recent' ? Date.parse(b.addedAt) - Date.parse(a.addedAt) : sort === 'title' ? a.title.localeCompare(b.title) : sort === 'author' ? (a.authors[0] ?? '').localeCompare(b.authors[0] ?? '') : b.addedAt.localeCompare(a.addedAt))
+    return filtered.sort((a, b) => page === 'recent' ? Date.parse(b.addedAt) - Date.parse(a.addedAt) : sort === 'title' ? a.title.localeCompare(b.title) : sort === 'author' ? (bookAuthors(a)[0] ?? '').localeCompare(bookAuthors(b)[0] ?? '') : b.addedAt.localeCompare(a.addedAt))
   }, [state, query, page, sort, authorFilter, genreFilter, languageFilter])
   const recentGroups = useMemo(() => {
     if (page !== 'recent') return []
@@ -520,7 +531,7 @@ export default function App() {
   async function startEdit(book: Book) {
     setFocusedDeviceBook(null)
     setFocusedBook(book)
-    setEditDraft({ title: book.title, authors: book.authors.join('; '), publisher: book.publisher ?? '', language: book.language ?? '', published: book.published ?? '', subjects: (book.subjects ?? []).join('; '), series: book.series ?? '', seriesIndex: book.seriesIndex ?? '', description: book.description ?? '' })
+    setEditDraft({ title: book.title, authors: bookAuthors(book).join('; '), publisher: book.publisher ?? '', language: book.language ?? '', published: book.published ?? '', subjects: (book.subjects ?? []).join('; '), series: book.series ?? '', seriesIndex: book.seriesIndex ?? '', description: book.description ?? '' })
     setEditing(true)
   }
   async function changeCover(book: Book, file?: File) {
@@ -696,8 +707,8 @@ export default function App() {
     <header className="topbar" data-drop-target={isDevice ? 'device' : 'library'}>
       <div className="topbar-leading">
         {!readerOpen && <div className="topbar-navigation" aria-label="Navigation history">
-          <button className="history-button" aria-label="Back" title="Back" disabled={navigation.index === 0} onClick={() => setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) }))}><ArrowLeft size={17}/></button>
-          <button className="history-button" aria-label="Forward" title="Forward" disabled={navigation.index >= navigation.pages.length - 1} onClick={() => setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) }))}><ArrowRight size={17}/></button>
+          <button className="history-button" aria-label="Back" title="Back" aria-disabled={navigation.index === 0} onClick={() => { if (navigation.index === 0) return; setNavigation(current => ({ ...current, index: Math.max(0, current.index - 1) })) }}><ArrowLeft size={17}/></button>
+          <button className="history-button" aria-label="Forward" title="Forward" aria-disabled={navigation.index >= navigation.pages.length - 1} onClick={() => { if (navigation.index >= navigation.pages.length - 1) return; setNavigation(current => ({ ...current, index: Math.min(current.pages.length - 1, current.index + 1) })) }}><ArrowRight size={17}/></button>
         </div>}
         {readerOpen && previewTarget ? <><button className="history-button" aria-label="Previous page" title="Previous page" onClick={() => readerTurnRef.current(-1)}><ArrowLeft size={17}/></button><button className="history-button" aria-label="Next page" title="Next page" onClick={() => readerTurnRef.current(1)}><ArrowRight size={17}/></button><h1 className="global-page-title reader-global-title">{previewTarget.title}</h1></> : <h1 className="global-page-title">{page === 'library' ? `All books (${books.length})` : page === 'recent' ? 'Recently added' : page === 'device' ? 'Reader' : page === 'settings' ? 'Settings' : 'Updates'}</h1>}
       </div>
@@ -768,10 +779,11 @@ export default function App() {
 
 function BookTile({ book, layout, selected, menu, onMenu, onMenuClose, canRead, canSend, sendLabel, onPreview, onEdit, onSend, onDelete, onToggle, onOpen }: { book: Book; layout: 'grid' | 'list'; selected: boolean; menu: MenuAnchor | null; onMenu: (button: HTMLButtonElement) => void; onMenuClose: () => void; canRead: boolean; canSend: boolean; sendLabel: string; onPreview: () => void; onEdit: () => void; onSend: () => void; onDelete: () => void; onToggle: (e: React.MouseEvent) => void; onOpen: () => void }) {
   const cover = bookCover(book)
+  const authors = bookAuthors(book)
   return <article className={`book-tile ${layout === 'list' ? 'book-row' : ''} ${selected ? 'book-selected' : ''}`}>
     <button className="book-main" onClick={onOpen} aria-label={`View ${book.title}`}>
       <div className="cover-wrap"><img src={cover} alt={`${book.title} cover`} draggable="false" onError={e => { e.currentTarget.src = missingCover }}/><span className="cover-gloss"/><span className="quick-check" aria-hidden="true"><Check size={13}/></span></div>
-      <span className="book-meta"><strong title={book.title}>{book.title}</strong><span title={book.authors.join(', ')}>{book.authors.join(', ') || 'Unknown author'}</span></span>
+      <span className="book-meta"><strong title={book.title}>{book.title}</strong><span title={authors.join(', ')}>{authors.join(', ') || 'Unknown author'}</span></span>
     </button>
     <div className="book-menu-anchor" data-book-menu><button className="tile-more" title={`Actions for ${book.title}`} aria-label={`Actions for ${book.title}`} aria-haspopup="menu" aria-expanded={!!menu} onClick={e => { e.stopPropagation(); onMenu(e.currentTarget) }}><MoreHorizontal size={18}/></button></div>
     <button className={`select-hit ${selected ? 'checked' : ''}`} aria-label={`${selected ? 'Deselect' : 'Select'} ${book.title}`} aria-pressed={selected} onClick={onToggle}>{selected && <Check size={12}/>}</button>
@@ -802,8 +814,9 @@ function ContextMenu({ anchor, onClose, items }: { anchor: MenuAnchor; onClose: 
 const unknownFilter = '__unknown__'
 function matchesFilter(values: string[] | undefined, selected: string) {
   if (!selected) return true
-  const present = (values ?? []).some(value => value.trim())
-  return selected === unknownFilter ? !present : (values ?? []).includes(selected)
+  const safeValues = Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string') : []
+  const present = safeValues.some(value => value.trim())
+  return selected === unknownFilter ? !present : safeValues.includes(selected)
 }
 function FilterTag({ label, value, onRemove }: { label: string; value: string; onRemove: () => void }) { return <span className="filter-tag"><span>{label}: {value}</span><button aria-label={`Remove ${label} filter`} onClick={onRemove}><X size={12}/></button></span> }
 function FilterPicker({ authorFilter, genreFilter, languageFilter, metadata, setAuthorFilter, setGenreFilter, setLanguageFilter }: { authorFilter: string; genreFilter: string; languageFilter: string; metadata: { authors: { values: string[]; missing: boolean }; genres: { values: string[]; missing: boolean }; languages: { values: string[]; missing: boolean } }; setAuthorFilter: (value: string) => void; setGenreFilter: (value: string) => void; setLanguageFilter: (value: string) => void }) {
@@ -1328,8 +1341,9 @@ function MetadataDetails({ metadata, format, fileSize }: { metadata: MetadataSou
   if (metadata.series?.trim()) fields.push(['Series', `${metadata.series.trim()}${metadata.seriesIndex?.trim() ? ` · ${metadata.seriesIndex.trim()}` : ''}`])
   if (metadata.pageCount && metadata.pageCount > 0) fields.push(['Pages', metadata.pageCount.toLocaleString()])
   if (metadata.language?.trim()) fields.push(['Language', languageLabel(metadata.language)])
-  if (metadata.subjects?.length) fields.push(['Genres', metadata.subjects.filter(Boolean).join(', ')])
-  const authorSort = metadata.authorSort?.map(value => value.trim()).filter(Boolean) ?? []
+  const subjects = bookSubjects(metadata)
+  if (subjects.length) fields.push(['Genres', subjects.filter(Boolean).join(', ')])
+  const authorSort = Array.isArray(metadata.authorSort) ? metadata.authorSort.filter((value): value is string => typeof value === 'string').map(value => value.trim()).filter(Boolean) : []
   if (authorSort.length) fields.push(['Author sort', authorSort.join(' · ')])
   if (metadata.titleSort?.trim()) fields.push(['Title sort', metadata.titleSort.trim()])
   if (format) fields.push(['Format', format])
@@ -1378,7 +1392,7 @@ function DetailsPanel({ book, editing, draft, setDraft, canSend, onClose, onEdit
       <div className="edit-series"><label>Series<input value={draft.series} onChange={e => update('series', e.target.value)}/></label><label>Index<input value={draft.seriesIndex} onChange={e => update('seriesIndex', e.target.value)}/></label></div>
       <label>Description<textarea rows={5} value={draft.description} onChange={e => update('description', e.target.value)}/></label>
       <div className="edit-actions"><button className="quiet-button" onClick={onCancel}>Cancel</button><button className="toolbar-button primary-button" onClick={onSave} disabled={!draft.title.trim()}><Check size={15}/> Save</button></div>
-    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{book.authors.join(', ') || 'Unknown author'}</p><div className="details-actions">{hasReadableFile && <button className="toolbar-button primary-button" onClick={() => onPreview()}><BookOpen size={15}/> Read</button>}{canSend && <button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to device</button>}<button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><section className="book-files" aria-label="Book files"><div className="book-files-heading"><h3>Files</h3><button className="quiet-button" disabled={coverDisabled} onClick={onAttachFiles}><Plus size={14}/> Add files</button></div>{files.length ? files.map(file => <div className="book-file-row" key={file.id}><div><strong>{file.format.toUpperCase()}</strong><span>{file.filename} · {fmtBytes(file.size)}{file.preferred ? ' · Preferred' : ''}</span></div>{file.canRead ? <button className="quiet-button" onClick={() => onPreview(file.id)}>Read</button> : <button className="quiet-button" onClick={() => onOpenFile(file.id)}>Open</button>}</div>) : <p className="book-files-empty">No files added yet.</p>}</section><MetadataDetails metadata={book} format={preferredFormat.toUpperCase()} fileSize={book.fileSize}/></>}
+    </div> : <><h2 className="detail-title">{book.title}</h2><p className="detail-author">{bookAuthors(book).join(', ') || 'Unknown author'}</p><div className="details-actions">{hasReadableFile && <button className="toolbar-button primary-button" onClick={() => onPreview()}><BookOpen size={15}/> Read</button>}{canSend && <button className="toolbar-button" onClick={onSend}><Send size={15}/> Send to device</button>}<button className="toolbar-button" onClick={onEdit}><Pencil size={15}/> Edit details</button><button className="toolbar-button danger-button" onClick={onDelete}><Trash2 size={15}/> Remove from library</button></div><section className="book-files" aria-label="Book files"><div className="book-files-heading"><h3>Files</h3><button className="quiet-button" disabled={coverDisabled} onClick={onAttachFiles}><Plus size={14}/> Add files</button></div>{files.length ? files.map(file => <div className="book-file-row" key={file.id}><div><strong>{file.format.toUpperCase()}</strong><span>{file.filename} · {fmtBytes(file.size)}{file.preferred ? ' · Preferred' : ''}</span></div>{file.canRead ? <button className="quiet-button" onClick={() => onPreview(file.id)}>Read</button> : <button className="quiet-button" onClick={() => onOpenFile(file.id)}>Open</button>}</div>) : <p className="book-files-empty">No files added yet.</p>}</section><MetadataDetails metadata={book} format={preferredFormat.toUpperCase()} fileSize={book.fileSize}/></>}
     <div className="detail-footer"><span>Imported book files are stored in your Attune library.</span><CircleHelp size={15}/></div>
   </aside>
 }

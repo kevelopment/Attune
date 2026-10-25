@@ -19,11 +19,13 @@ import (
 )
 
 const (
-	maxEntries   = 10000
-	maxTotalSize = 128 << 20
-	maxXMLSize   = 4 << 20
-	maxCoverSize = 32 << 20
-	maxEntrySize = 64 << 20
+	// MaxArchiveSize bounds the compressed source file before hashing or parsing.
+	MaxArchiveSize = 256 << 20
+	maxEntries     = 10000
+	maxTotalSize   = 128 << 20
+	maxXMLSize     = 4 << 20
+	maxCoverSize   = 32 << 20
+	maxEntrySize   = 64 << 20
 )
 
 type Metadata struct {
@@ -370,6 +372,16 @@ func removePropertyToken(attrs []xml.Attr, property string) []xml.Attr {
 
 // Parse validates the archive structure and extracts metadata and an optional cover.
 func Parse(filename string) (Metadata, error) {
+	info, err := os.Stat(filename)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return Metadata{}, errors.New("EPUB source must be a regular file")
+	}
+	if info.Size() <= 0 || info.Size() > MaxArchiveSize {
+		return Metadata{}, fmt.Errorf("EPUB archive must be between 1 byte and %d MiB", MaxArchiveSize>>20)
+	}
 	z, err := zip.OpenReader(filename)
 	if err != nil {
 		return Metadata{}, err
@@ -689,10 +701,10 @@ func validateArchive(z *zip.ReadCloser) (map[string]*zip.File, error) {
 		if f.Mode()&0o170000 == 0o120000 {
 			return nil, errors.New("EPUB contains a symbolic link")
 		}
-		total += f.UncompressedSize64
-		if f.UncompressedSize64 > maxEntrySize || total > maxTotalSize {
+		if f.UncompressedSize64 > maxEntrySize || f.UncompressedSize64 > maxTotalSize-total {
 			return nil, errors.New("EPUB exceeds extraction size limits")
 		}
+		total += f.UncompressedSize64
 		if _, exists := files[clean]; exists {
 			return nil, fmt.Errorf("duplicate EPUB path %q", clean)
 		}
@@ -736,7 +748,7 @@ func fontFile(name string) bool {
 }
 
 func safeName(name string) (string, error) {
-	if name == "" || strings.Contains(name, "\\") || strings.HasPrefix(name, "/") || strings.Contains(name, ":") {
+	if name == "" || strings.ContainsAny(name, "\\:") || strings.IndexByte(name, 0) >= 0 || strings.HasPrefix(name, "/") {
 		return "", fmt.Errorf("unsafe EPUB path %q", name)
 	}
 	clean := path.Clean(name)

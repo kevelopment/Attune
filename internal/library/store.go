@@ -13,6 +13,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -504,11 +505,27 @@ func (s *Store) importEPUB(source, batchID string, importedMetadata *model.Book,
 	if err != nil {
 		return model.Book{}, false, err
 	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return model.Book{}, false, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return model.Book{}, false, errors.New("EPUB source must be a regular file")
+	}
+	if info.Size() <= 0 || info.Size() > epub.MaxArchiveSize {
+		_ = file.Close()
+		return model.Book{}, false, fmt.Errorf("EPUB archive must be between 1 byte and %d MiB", epub.MaxArchiveSize>>20)
+	}
 	h := sha256.New()
-	_, err = io.Copy(h, file)
+	read, err := io.Copy(h, io.LimitReader(file, epub.MaxArchiveSize+1))
 	closeErr := file.Close()
 	if err != nil {
 		return model.Book{}, false, err
+	}
+	if read > epub.MaxArchiveSize {
+		return model.Book{}, false, fmt.Errorf("EPUB archive exceeds the %d MiB file size limit", epub.MaxArchiveSize>>20)
 	}
 	if closeErr != nil {
 		return model.Book{}, false, closeErr
@@ -562,11 +579,20 @@ func (s *Store) importEPUB(source, batchID string, importedMetadata *model.Book,
 		return model.Book{}, false, err
 	}
 	metadata := model.Book{
-		Title: meta.Title, Authors: meta.Authors, Language: meta.Language,
+		Title: meta.Title, Authors: cleanAuthors(meta.Authors), Language: meta.Language,
 		Subjects: cleanSubjects(meta.Subjects),
 	}
 	extra := extrasFromEPUB(meta)
 	coverData, coverExt := meta.Cover, meta.CoverExt
+	if len(coverData) > 0 {
+		validatedExt, _, coverErr := ValidateCover(coverData)
+		if coverErr != nil {
+			log.Printf("Skipping invalid or unsupported EPUB cover %q: %v", filepath.Base(source), coverErr)
+			coverData, coverExt = nil, ""
+		} else {
+			coverExt = validatedExt
+		}
+	}
 	if importedMetadata != nil {
 		metadata = *importedMetadata
 		metadata.Title = strings.TrimSpace(metadata.Title)
@@ -575,7 +601,7 @@ func (s *Store) importEPUB(source, batchID string, importedMetadata *model.Book,
 		}
 		metadata.Authors = cleanAuthors(metadata.Authors)
 		if len(metadata.Authors) == 0 {
-			metadata.Authors = meta.Authors
+			metadata.Authors = cleanAuthors(meta.Authors)
 		}
 		metadata.Language = strings.TrimSpace(metadata.Language)
 		metadata.Subjects = cleanSubjects(metadata.Subjects)
@@ -1225,8 +1251,14 @@ func scanBook(r rowScanner) (model.Book, error) {
 	if err = json.Unmarshal([]byte(authors), &b.Authors); err != nil {
 		return b, err
 	}
+	if b.Authors == nil {
+		b.Authors = []string{}
+	}
 	if err = json.Unmarshal([]byte(subjects), &b.Subjects); err != nil {
 		return b, err
+	}
+	if b.Subjects == nil {
+		b.Subjects = []string{}
 	}
 	b.CustomMetadata = json.RawMessage(customJSON)
 	var extras bookExtras
