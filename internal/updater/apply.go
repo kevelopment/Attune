@@ -11,12 +11,13 @@ import (
 )
 
 type Plan struct {
-	ParentPID   int    `json:"parentPid"`
-	Staged      string `json:"staged"`
-	Target      string `json:"target"`
-	GOOS        string `json:"goos"`
-	LibraryPath string `json:"libraryPath"`
-	Restart     bool   `json:"restart"`
+	ParentPID           int    `json:"parentPid"`
+	Staged              string `json:"staged"`
+	Target              string `json:"target"`
+	GOOS                string `json:"goos"`
+	LibraryPath         string `json:"libraryPath"`
+	Restart             bool   `json:"restart"`
+	InstallDesktopEntry bool   `json:"installDesktopEntry,omitempty"`
 }
 
 func ApplyPackage(staged, target, goos, libraryPath string) error {
@@ -253,8 +254,18 @@ func applyPortable(staged, target, goos string) error {
 		files = append([]string{"Attune.exe", "kindling-cli.exe"}, files...)
 	} else {
 		files = append([]string{"Attune", "kindling-cli"}, files...)
+		if goos == "linux" {
+			files = append(files, "attune.svg")
+		}
 	}
 	for _, rel := range files {
+		if goos == "linux" && rel == "attune.svg" {
+			if _, err := os.Lstat(filepath.Join(staged, rel)); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				return fmt.Errorf("inspect %s: %w", rel, err)
+			}
+		}
 		if err := copyTree(filepath.Join(staged, rel), filepath.Join(stageDir, rel)); err != nil {
 			return fmt.Errorf("stage %s: %w", rel, err)
 		}

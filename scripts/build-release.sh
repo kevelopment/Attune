@@ -90,7 +90,10 @@ Attune Linux $goarch (experimental)
 
 Run ./Attune. This build requires GTK 3, WebKit2GTK 4.1, and libmtp runtime libraries.
 MTP access may require a udev rule granting your account permission to the reader. Close other MTP clients if a reader is busy. USB mass-storage discovery, transfer, and eject need lsblk, udisksctl, and UDisks/polkit permissions. Hardware validation is limited; ensure storage readers are mounted before transferring.
+
+System packages: install the RPM or DEB to add a system-wide desktop launcher. If an in-app update cannot write to a system installation, Attune moves the updated app to ~/.local/opt/attune and adds a per-user application launcher. Future in-app updates then run without administrator approval.
 EOF
+  cp frontend/public/attune.svg "$stage/attune.svg"
   tar -czf "dist/Attune-linux-$goarch.tar.gz" -C build/release "Attune-$goos-$goarch"
   scripts/package-linux.sh "$VERSION" "$goarch" "$stage"
 else
