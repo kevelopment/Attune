@@ -18,7 +18,20 @@ func RunHelper(planPath string) (result error) {
 	if cacheErr != nil {
 		return cacheErr
 	}
-	return runHelper(planPath, filepath.Join(cacheDir, "Attune"), waitForParent, ApplyPackage, relaunch)
+	cacheRoot := filepath.Join(cacheDir, "Attune")
+	plan, err := readPlan(planPath, cacheRoot)
+	if err != nil {
+		return err
+	}
+	if runtime.GOOS == "linux" {
+		if err := PreflightTarget(plan.Target, plan.LibraryPath, plan.GOOS); err != nil {
+			if errors.Is(err, os.ErrPermission) {
+				return runElevatedUpdate(planPath, cacheRoot, plan)
+			}
+			return err
+		}
+	}
+	return runHelper(planPath, cacheRoot, waitForParent, ApplyPackage, relaunch)
 }
 
 func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, apply func(string, string, string, string) error, restart func(string, string) error) (result error) {
@@ -30,38 +43,11 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 		_ = os.MkdirAll(updaterDir, 0o700)
 		_ = os.WriteFile(filepath.Join(updaterDir, "last-update-error.txt"), []byte(result.Error()+"\n"), 0o600)
 	}()
-	info, err := os.Lstat(planPath)
+	plan, err := readPlan(planPath, cacheRoot)
 	if err != nil {
 		return err
-	}
-	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
-		return errors.New("update plan is not a private regular file")
-	}
-	if !inside(updaterDir, planPath) {
-		return errors.New("update plan is outside the private Attune updater folder")
 	}
 	defer os.Remove(planPath + ".ready")
-	b, err := os.ReadFile(planPath)
-	if err != nil {
-		return err
-	}
-	var plan Plan
-	if err := json.Unmarshal(b, &plan); err != nil {
-		return err
-	}
-	if plan.ParentPID <= 0 || plan.GOOS != runtime.GOOS {
-		return errors.New("update plan does not match this process")
-	}
-	if plan.Staged == "" || plan.Target == "" || !filepath.IsAbs(plan.Staged) || !filepath.IsAbs(plan.Target) {
-		return errors.New("update plan contains invalid paths")
-	}
-	cache, err := filepath.Abs(cacheRoot)
-	if err != nil {
-		return err
-	}
-	if !inside(cache, plan.Staged) {
-		return errors.New("staged update is outside the Attune cache")
-	}
 	if err := os.WriteFile(planPath+".ready", []byte("ready\n"), 0o600); err != nil {
 		return fmt.Errorf("signal updater helper readiness: %w", err)
 	}
@@ -78,11 +64,51 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 	}
 	_ = os.Remove(planPath)
 	_ = os.Remove(filepath.Join(updaterDir, "state.json"))
+	cache, err := filepath.Abs(cacheRoot)
+	if err != nil {
+		return err
+	}
 	if inside(filepath.Join(cache, "updates"), plan.Staged) {
 		_ = os.RemoveAll(filepath.Dir(plan.Staged))
 	}
 	_ = os.Remove(filepath.Join(updaterDir, "last-update-error.txt"))
 	return nil
+}
+
+func readPlan(planPath, cacheRoot string) (Plan, error) {
+	var plan Plan
+	updaterDir := filepath.Join(cacheRoot, "updater")
+	info, err := os.Lstat(planPath)
+	if err != nil {
+		return plan, err
+	}
+	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
+		return plan, errors.New("update plan is not a private regular file")
+	}
+	if !inside(updaterDir, planPath) {
+		return plan, errors.New("update plan is outside the private Attune updater folder")
+	}
+	b, err := os.ReadFile(planPath)
+	if err != nil {
+		return plan, err
+	}
+	if err := json.Unmarshal(b, &plan); err != nil {
+		return plan, err
+	}
+	if plan.ParentPID <= 0 || plan.GOOS != runtime.GOOS {
+		return plan, errors.New("update plan does not match this process")
+	}
+	if plan.Staged == "" || plan.Target == "" || !filepath.IsAbs(plan.Staged) || !filepath.IsAbs(plan.Target) {
+		return plan, errors.New("update plan contains invalid paths")
+	}
+	cache, err := filepath.Abs(cacheRoot)
+	if err != nil {
+		return plan, err
+	}
+	if !inside(cache, plan.Staged) {
+		return plan, errors.New("staged update is outside the Attune cache")
+	}
+	return plan, nil
 }
 
 func inside(root, candidate string) bool {
@@ -237,8 +263,13 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	if err := ValidatePackage(staged, goos); err != nil {
 		return err
 	}
+	needsElevation := false
 	if err := PreflightTarget(target, libraryPath, goos); err != nil {
-		return err
+		if goos == "linux" && errors.Is(err, os.ErrPermission) {
+			needsElevation = true
+		} else {
+			return err
+		}
 	}
 	cache, err := os.UserCacheDir()
 	if err != nil {
@@ -270,7 +301,11 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	startupLog := filepath.Join(dir, "helper-startup.log")
 	cmd := exec.Command(helperExecutable(dir), "--attune-update-helper", planPath)
 	cmd.Dir = dir
-	return startHelperAndWait(cmd, planPath, startupLog, 5*time.Second)
+	timeout := 5 * time.Second
+	if needsElevation {
+		timeout = 20 * time.Minute
+	}
+	return startHelperAndWait(cmd, planPath, startupLog, timeout)
 }
 
 func startHelperAndWait(cmd *exec.Cmd, planPath, startupLog string, timeout time.Duration) error {

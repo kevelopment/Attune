@@ -26,6 +26,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 4 && os.Args[1] == "--attune-update-helper-root" {
+		if err := updater.RunElevatedHelper(os.Args[2], os.Args[3]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	app := NewApp()
 	err := wails.Run(&options.App{
 		Title: "Attune", Width: 1240, Height: 820, MinWidth: 900, MinHeight: 600,
