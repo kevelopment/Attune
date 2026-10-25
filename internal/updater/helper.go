@@ -26,6 +26,9 @@ func RunHelper(planPath string) (result error) {
 	if runtime.GOOS == "linux" {
 		if err := PreflightTarget(plan.Target, plan.LibraryPath, plan.GOOS); err != nil {
 			if errors.Is(err, os.ErrPermission) {
+				if plan.InstallDesktopEntry || isUserInstallTarget(plan.Target) {
+					return err
+				}
 				return runElevatedUpdate(planPath, cacheRoot, plan)
 			}
 			return err
@@ -56,6 +59,11 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 	}
 	if err := apply(plan.Staged, plan.Target, plan.GOOS, plan.LibraryPath); err != nil {
 		return err
+	}
+	if plan.InstallDesktopEntry {
+		if err := installUserDesktopEntry(plan.Target); err != nil {
+			return fmt.Errorf("install per-user application launcher: %w", err)
+		}
 	}
 	if plan.Restart {
 		if err := restart(plan.Target, plan.GOOS); err != nil {
@@ -263,10 +271,32 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	if err := ValidatePackage(staged, goos); err != nil {
 		return err
 	}
-	needsElevation := false
+	installDesktopEntry := false
 	if err := PreflightTarget(target, libraryPath, goos); err != nil {
 		if goos == "linux" && errors.Is(err, os.ErrPermission) {
-			needsElevation = true
+			userTarget, targetErr := userInstallTarget()
+			if targetErr != nil {
+				return fmt.Errorf("prepare per-user update location: %w", targetErr)
+			}
+			absTarget, absErr := filepath.Abs(target)
+			if absErr != nil {
+				return absErr
+			}
+			absUserTarget, absErr := filepath.Abs(userTarget)
+			if absErr != nil {
+				return absErr
+			}
+			if filepath.Clean(absTarget) == filepath.Clean(absUserTarget) {
+				return err
+			}
+			if err := os.MkdirAll(userTarget, 0o755); err != nil {
+				return fmt.Errorf("create per-user installation folder: %w", err)
+			}
+			if err := PreflightTarget(userTarget, libraryPath, goos); err != nil {
+				return fmt.Errorf("per-user installation folder is not writable: %w", err)
+			}
+			target = userTarget
+			installDesktopEntry = true
 		} else {
 			return err
 		}
@@ -290,7 +320,7 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	if err := os.Remove(planPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove previous update plan: %w", err)
 	}
-	if err := writePlan(planPath, Plan{ParentPID: os.Getpid(), Staged: staged, Target: target, GOOS: goos, LibraryPath: libraryPath, Restart: restart}); err != nil {
+	if err := writePlan(planPath, Plan{ParentPID: os.Getpid(), Staged: staged, Target: target, GOOS: goos, LibraryPath: libraryPath, Restart: restart, InstallDesktopEntry: installDesktopEntry}); err != nil {
 		return err
 	}
 	readyPath := planPath + ".ready"
@@ -301,11 +331,7 @@ func LaunchHelper(staged, target, goos, libraryPath string, restart bool) error 
 	startupLog := filepath.Join(dir, "helper-startup.log")
 	cmd := exec.Command(helperExecutable(dir), "--attune-update-helper", planPath)
 	cmd.Dir = dir
-	timeout := 5 * time.Second
-	if needsElevation {
-		timeout = 20 * time.Minute
-	}
-	return startHelperAndWait(cmd, planPath, startupLog, timeout)
+	return startHelperAndWait(cmd, planPath, startupLog, 5*time.Second)
 }
 
 func startHelperAndWait(cmd *exec.Cmd, planPath, startupLog string, timeout time.Duration) error {
