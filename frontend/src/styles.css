@@ -52,8 +52,6 @@ html:has(.app-shell.preview-mode),html:has(.app-shell.preview-mode) body,.app-sh
 .history-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .history-button[aria-disabled=true]{border-color:var(--line);background:var(--surface-soft);color:var(--muted);cursor:default}
 html.linux-webview .history-button[aria-disabled=true]{border-color:var(--line-strong);background:var(--surface-soft);color:var(--text);opacity:1}
-html.linux-webview .history-back-button>svg{display:none}
-html.linux-webview .history-back-button::before{content:"←";display:block;color:currentColor;font:22px/1 "DejaVu Sans",sans-serif}
 .topbar .toolbar-button{height:32px}
 .search-box input:focus,.search-box input:focus-visible{outline:none;box-shadow:none}
 .topbar{grid-column:1/-1;margin-right:-12px;padding:0 12px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px}
@@ -283,6 +281,11 @@ html.linux-webview .topbar {
   -webkit-backdrop-filter: none !important;
 }
 
+/* Keep the Linux titlebar over the content column; the rail starts below it. */
+html.linux-webview .topbar {
+  grid-column: 2 / -1;
+}
+
 html.linux-webview *,
 html.linux-webview *::before,
 html.linux-webview *::after {
@@ -299,10 +302,6 @@ html.linux-webview .drop-overlay,
 html.linux-webview .transfer-toast,
 html.linux-webview .toast {
   background: var(--panel) !important;
-}
-
-html.linux-webview .sidebar {
-  padding-top: 12px;
 }
 
 html.linux-webview .topbar-leading {
