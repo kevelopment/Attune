@@ -64,6 +64,10 @@ func runHelper(planPath, cacheRoot string, wait func(int, time.Duration) error, 
 	}
 	_ = os.Remove(planPath)
 	_ = os.Remove(filepath.Join(updaterDir, "state.json"))
+	cache, err := filepath.Abs(cacheRoot)
+	if err != nil {
+		return err
+	}
 	if inside(filepath.Join(cache, "updates"), plan.Staged) {
 		_ = os.RemoveAll(filepath.Dir(plan.Staged))
 	}
