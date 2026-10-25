@@ -386,6 +386,9 @@ func (a *App) importCalibreLibrary(root string) (model.ImportResult, error) {
 func (a *App) importCalibreRecord(root string, item calibre.Book, batchID string) (bookID string, duplicate bool, issues []string, err error) {
 	defer recoverImportPanic("Calibre record "+item.ID, &err)
 	issues = make([]string, 0)
+	if item.Issue != "" {
+		issues = append(issues, item.Issue)
+	}
 	libraryUUID := strings.TrimSpace(item.LibraryUUID)
 	if libraryUUID == "" {
 		abs, err := filepath.Abs(root)
@@ -465,9 +468,6 @@ func (a *App) importCalibreRecord(root string, item calibre.Book, batchID string
 		if alreadyPresent && file.BookID != bookID {
 			issues = append(issues, strings.ToLower(asset.Format)+": identical content is already attached to another Attune book")
 		}
-	}
-	if len(item.Assets) == 0 && item.Issue != "" {
-		issues = append(issues, item.Issue)
 	}
 	if err = a.store.LinkCalibreSource(libraryUUID, bookUUID, bookID, item.RawMetadata, item.CustomValues, item.ReadingState, item.Metadata.ModifiedAt); err != nil {
 		return "", duplicate, issues, err
