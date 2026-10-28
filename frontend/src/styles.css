@@ -12,7 +12,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
 
 /* Wails full-size titlebar: keep its safe area clear and let the remaining header drag the window. */
-.app-shell{--wails-drop-target:drop}.sidebar{--wails-draggable:drag}.sidebar button,.sidebar a,.top-actions,.top-actions *{--wails-draggable:no-drag}
+.sidebar{--wails-draggable:drag}.sidebar button,.sidebar a,.top-actions,.top-actions *{--wails-draggable:no-drag}
 @media(prefers-reduced-transparency:reduce){.sidebar{background:var(--panel)}}
 .import-status{position:fixed;z-index:31;right:22px;bottom:22px;width:min(370px,calc(100vw - 32px));display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border:1px solid #e6e6e8;border-radius:13px;background:rgba(255,255,255,.96);box-shadow:0 10px 35px #1b1b241e;backdrop-filter:blur(18px);animation:toast-in .2s ease-out}.import-status-icon{display:grid;place-items:center;margin-top:2px;color:#6989d8}.import-status-body{flex:1;min-width:0}.import-status-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#414248;font-size:1rem}.import-status-heading strong{font-weight:600}.import-status-heading .icon-button{width:24px;height:24px;margin:-5px -6px -2px 0;flex:none}.import-filename{margin-top:4px;color:#898a91;font-size:0.83333rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.import-status .progress-track{height:4px;margin-top:9px}.import-status .progress-track span{background:#6687db}.import-counts{margin-top:7px;color:#8b8c92;font-size:0.83333rem}.import-status-error{border-color:#ecdada}.import-status-error .import-status-icon{color:#b45454}
 @media(prefers-color-scheme:dark){.import-status{background:rgba(40,41,45,.97);border-color:#414247;box-shadow:0 10px 35px #0007}.import-status-heading{color:#e2e2e5}.import-filename,.import-counts{color:#a0a1a8}.import-status-error{border-color:#5d3939}.import-status-error .import-status-icon{color:#e09494}}
@@ -343,4 +343,29 @@ html.linux-webview .topbar-leading {
 .linux-window-control.linux-window-close:hover {
   background: #d94a4a;
   color: #fff;
+}
+
+html.linux-webview .topbar {
+  --wails-non-client-region: caption;
+}
+
+html.linux-webview .topbar .top-actions,
+html.linux-webview .topbar .top-actions *,
+html.linux-webview .topbar-navigation,
+html.linux-webview .topbar-navigation *,
+html.linux-webview .topbar-center,
+html.linux-webview .topbar-center *,
+html.linux-webview .linux-window-controls,
+html.linux-webview .linux-window-controls * {
+  --wails-non-client-region: none;
+}
+
+html.linux-webview .welcome-shell {
+  --wails-non-client-region: caption;
+}
+
+html.linux-webview .welcome-panel,
+html.linux-webview .linux-onboarding-controls,
+html.linux-webview .linux-onboarding-controls * {
+  --wails-non-client-region: none;
 }

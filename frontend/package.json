@@ -1,7 +1,7 @@
 {
   "name": "attune-frontend",
   "private": true,
-  "version": "0.0.20",
+  "version": "0.0.21",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@wailsio/runtime": "3.0.0",
     "foliate-js": "git+https://github.com/johnfactotum/foliate-js.git#78914aef4466eb960965702401634c2cb348e9b1",
     "lucide-react": "^0.468.0",
     "pdfjs-dist": "6.4.299",

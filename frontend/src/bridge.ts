@@ -1,4 +1,6 @@
 import type { AppState, Book, BookFile, BookMetadataEdit, BookPreview, Device, DeviceBook, DevicePreferences, ImportResult, Progress, ImportProgress, UpdateState, ReadingProgress, ReadingBookmark, ReaderLocation } from './types'
+import { Events } from '@wailsio/runtime'
+import * as AppBindings from '../bindings/attune/app'
 
 export type ReaderAnnotation = { id: string; bookId: string; assetId?: string; format?: string; kind: string; text?: string; note?: string; quote?: string; cfi?: string; timestamp?: string; status: 'placed' | 'unplaced' }
 
@@ -114,8 +116,8 @@ const previewDevicePreferences = new Map<string, DevicePreferences>()
 let previewBookmarkID = 1
 
 function api(name: string, ...args: unknown[]) {
-  const fn = window.go?.main?.App?.[name]
-  if (!fn) throw new Error(`The desktop command “${name}” is unavailable. Run this app in its desktop window.`)
+  const fn = AppBindings[name as keyof typeof AppBindings] as ((...args: any[]) => any) | undefined
+  if (typeof fn !== 'function') throw new Error(`The desktop command “${name}” is unavailable. Run this app in its desktop window.`)
   return fn(...args)
 }
 
@@ -393,7 +395,15 @@ export const bridge = {
       if (event === 'update:state') updateListeners.push(cb)
       return () => { listeners = listeners.filter(fn => fn !== cb); importListeners = importListeners.filter(fn => fn !== cb); updateListeners = updateListeners.filter(fn => fn !== cb) }
     }
-    return window.runtime?.EventsOn?.(event, cb)
+    return Events.On(event, payload => cb(payload.data))
+  },
+  onFilesDropped(cb: (x: number, y: number, paths: string[]) => void) {
+    if (isPreview) return undefined
+    return Events.On('files:dropped', payload => {
+      const data = record(payload.data)
+      if (!data) return
+      cb(safeNumber(data.x), safeNumber(data.y), safeStrings(data.files))
+    })
   },
   previewCover(url: string) {
     if (!url.startsWith('preview:')) return url

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Attune
+Comment=Attune your library.
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/Attune %u
+Terminal=false
+Type=Application
+Icon=Attune
+Categories=Utility;
+StartupWMClass=Attune

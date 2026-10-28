@@ -26,11 +26,11 @@ import (
 	"attune/internal/formats"
 	"attune/internal/library"
 	"attune/internal/model"
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
 	ctx                context.Context
+	desktop            Desktop
 	store              *library.Store
 	manager            deviceManager
 	converter          converterRunner
@@ -78,7 +78,6 @@ func NewApp() *App {
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
-	a.emit = func(event string, data ...interface{}) { wruntime.EventsEmit(ctx, event, data...) }
 	envRoot := os.Getenv("EBOOK_LIBRARY_HOME")
 	root := envRoot
 	configPath, err := librarySettingsPath(envRoot)
@@ -221,14 +220,17 @@ func (a *App) Shutdown(ctx context.Context) {
 	a.applyUpdateOnQuit()
 }
 
-func (a *App) BeforeClose(ctx context.Context) bool {
+func (a *App) BeforeClose() bool {
 	a.mu.Lock()
 	busy := a.busy
 	a.mu.Unlock()
 	if !busy {
 		return false
 	}
-	answer, err := wruntime.MessageDialog(ctx, wruntime.MessageDialogOptions{Type: wruntime.QuestionDialog, Title: "Transfer in progress", Message: "Cancel the transfer and close Attune?", Buttons: []string{"Keep open", "Cancel and close"}, DefaultButton: "Keep open", CancelButton: "Keep open"})
+	if a.desktop.Confirm == nil {
+		return true
+	}
+	answer, err := a.desktop.Confirm("Transfer in progress", "Cancel the transfer and close Attune?", []string{"Keep open", "Cancel and close"}, "Keep open", "Keep open")
 	if err != nil || answer != "Cancel and close" {
 		return true
 	}
@@ -299,7 +301,7 @@ func (a *App) GetState() (model.AppState, error) {
 }
 
 func (a *App) ImportBooks() (model.ImportResult, error) {
-	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Import books", Filters: []wruntime.FileFilter{{DisplayName: "Supported ebooks", Pattern: "*.epub;*.pdf;*.mobi;*.azw;*.azw3;*.prc;*.fb2;*.txt;*.cbz;*.cbr;*.rtf;*.doc;*.docx;*.odt;*.html;*.htmlz;*.pdb;*.lit;*.zip"}}})
+	paths, err := a.openFiles("Import books", "Supported ebooks", "*.epub;*.pdf;*.mobi;*.azw;*.azw3;*.prc;*.fb2;*.txt;*.cbz;*.cbr;*.rtf;*.doc;*.docx;*.odt;*.html;*.htmlz;*.pdb;*.lit;*.zip")
 	if err != nil {
 		return model.ImportResult{}, err
 	}
@@ -311,7 +313,7 @@ func (a *App) ImportCalibreLibrary() (model.ImportResult, error) {
 	if err := a.ready(); err != nil {
 		return model.ImportResult{BookIDs: []string{}, Errors: []string{}}, err
 	}
-	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose a Calibre library"})
+	root, err := a.openDirectory("Choose a Calibre library", "")
 	if err != nil || root == "" {
 		return model.ImportResult{BookIDs: []string{}, Errors: []string{}}, err
 	}
@@ -640,10 +642,7 @@ func (a *App) ChangeBookCover(id string) (model.Book, error) {
 	if err := a.ready(); err != nil {
 		return model.Book{}, err
 	}
-	filename, err := wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{
-		Title:   "Choose a book cover",
-		Filters: []wruntime.FileFilter{{DisplayName: "JPEG and PNG images", Pattern: "*.jpg;*.jpeg;*.png"}},
-	})
+	filename, err := a.openFile("Choose a book cover", "JPEG and PNG images", "*.jpg;*.jpeg;*.png")
 	if err != nil || filename == "" {
 		return model.Book{}, err
 	}
@@ -821,7 +820,7 @@ func (a *App) SelectDevice() (model.Device, error) {
 	case "windows":
 		defaultDirectory = `C:\`
 	}
-	root, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose mounted reader storage", DefaultDirectory: defaultDirectory})
+	root, err := a.openDirectory("Choose mounted reader storage", defaultDirectory)
 	if err != nil {
 		return model.Device{}, err
 	}
@@ -1358,7 +1357,7 @@ func (a *App) ChangeLibraryLocation() (string, error) {
 	if err := a.ready(); err != nil {
 		return "", err
 	}
-	parent, err := wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "Choose where to store your library"})
+	parent, err := a.openDirectory("Choose where to store your library", "")
 	if err != nil || parent == "" {
 		return "", err
 	}

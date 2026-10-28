@@ -1,8 +1,8 @@
 frontend/node_modules/
 frontend/dist/
-frontend/wailsjs/
 frontend/*.tsbuildinfo
 frontend/package.json.md5
+.task/
 build/bin/
 build/release/
 build/dmg-python/

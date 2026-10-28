@@ -22,7 +22,7 @@ The macOS release build uses the pinned, build-only Python packages in `scripts/
 
 Each package includes these files in its `licenses/` directory; the macOS app stores them at `Attune.app/Contents/Resources/licenses/`: `Attune-LICENSE.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES.txt`, `Kindling-LICENSE.txt`, and `Kindling-THIRD_PARTY_LICENSES.txt`.
 
-Linux packages are built on native Ubuntu 24.04 x64 and ARM64 runners with GTK3 and WebKit2GTK 4.1. The DEB targets Ubuntu 24.04 or a compatible Debian-family distribution, and the RPM targets Fedora-compatible distributions. They are native packages, not self-contained bundles: the package manager resolves their GTK, WebKitGTK, libmtp, and C runtime requirements during installation. Windows requires the WebView2 runtime. Platform build prerequisites are described in the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation).
+Linux packages are built on native Ubuntu 24.04 x64 and ARM64 runners with GTK3 and WebKit2GTK 4.1. The DEB targets Ubuntu 24.04 or a compatible Debian-family distribution, and the RPM targets Fedora-compatible distributions. They are native packages, not self-contained bundles: the package manager resolves their GTK, WebKitGTK, libmtp, and C runtime requirements during installation. Windows requires the WebView2 runtime. Platform build prerequisites are described in the [Wails v3 installation guide](https://v3.wails.io/getting-started/installation/).
 
 ## Build artifacts without a release
 
@@ -34,14 +34,14 @@ The automated publishing job uses the repository's built-in `GITHUB_TOKEN`, with
 
 Release tags use `vMAJOR.MINOR.PATCH` with an optional `-alpha`, `-beta`, or `-rc` suffix, optionally followed by a numeric sequence. For example, `v0.0.1` builds a native app with Wails product version `0.0.1` and publishes a stable GitHub Release. The release scripts embed the full semantic version in the Go binary through linker flags; the updater uses it to compare releases. The frontend package retains the full semantic version too.
 
-To prepare a release before publishing, use the draft workflow described above. Version `v0.0.5` is prepared in this commit. After its release, use the next unused version rather than recreating its tag:
+To prepare a release before publishing, use the draft workflow described above. This migration is prepared as `v0.0.21`. After its release, use the next unused version rather than recreating its tag:
 
 ```sh
 mise run test
 mise run lint
 git status --short
-git tag -a v0.0.6 -m "Attune v0.0.6"
-git push origin v0.0.6
+git tag -a v0.0.22 -m "Attune v0.0.22"
+git push origin v0.0.22
 ```
 
 Pushing the tag starts the release workflow. It validates the version, builds and packages every target, gathers checksums, and creates the GitHub Release with downloadable archives. Package names and Actions artifact labels include the version. If a required build fails, the publication job does not run. Stable tags omit the prerelease flag.

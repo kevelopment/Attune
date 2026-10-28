@@ -6,6 +6,7 @@ import (
 
 	backend "attune/internal/app"
 	"attune/internal/model"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type appBindings interface {
@@ -72,15 +73,17 @@ func NewApp() *App {
 	return &App{appBindings: core, core: core}
 }
 
-func (a *App) startup(ctx context.Context) {
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	configureLinuxAppearance()
 	followSystemAppIcon()
 	a.core.Startup(ctx)
+	return nil
 }
 
-func (a *App) shutdown(ctx context.Context) { a.core.Shutdown(ctx) }
-
-func (a *App) beforeClose(ctx context.Context) bool { return a.core.BeforeClose(ctx) }
+func (a *App) ServiceShutdown() error {
+	a.core.Shutdown(context.Background())
+	return nil
+}
 
 func (a *App) covers(w http.ResponseWriter, r *http.Request) {
 	a.core.ServeCovers(w, r)

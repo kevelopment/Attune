@@ -12,17 +12,17 @@ $env:PATH = "$env:GOBIN;$env:PATH"
 $env:CGO_ENABLED = "1"
 $helper = Join-Path $root "third_party/kindling/windows-amd64/kindling-cli.exe"
 if (!(Test-Path $helper)) { throw "Missing pinned helper: $helper" }
-if (!(Test-Path (Join-Path $env:GOBIN "wails.exe"))) {
-  go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
-  if ($LASTEXITCODE -ne 0) { throw "Could not install Wails CLI: $LASTEXITCODE" }
+if (!(Test-Path (Join-Path $env:GOBIN "wails3.exe"))) {
+  go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+  if ($LASTEXITCODE -ne 0) { throw "Could not install Wails v3 CLI: $LASTEXITCODE" }
 }
-$configPath = Join-Path $root "wails.json"
+$configPath = Join-Path $root "build/config.yml"
 $backup = Get-Content -Raw $configPath
+$env:EXTRA_LDFLAGS = "-X attune/internal/app.appVersion=$Version -X attune/internal/app.updateEnabled=true"
 try {
-  $config = $backup | ConvertFrom-Json
-  $config.info.productVersion = $ProductVersion
-  $config | ConvertTo-Json -Depth 32 | Set-Content -Encoding utf8 $configPath
-  & (Join-Path $env:GOBIN "wails.exe") build -clean -platform windows/amd64 -ldflags "-X attune/internal/app.appVersion=$Version -X attune/internal/app.updateEnabled=true"
+  $updated = [regex]::Replace($backup, '(?m)^  version: .*$', "  version: `"$ProductVersion`"", 1)
+  Set-Content -NoNewline -Encoding utf8 $configPath $updated
+  & (Join-Path $env:GOBIN "wails3.exe") build
   if ($LASTEXITCODE -ne 0) { throw "Wails build failed with exit code $LASTEXITCODE" }
   # Wails' clean build removes build/bin, so create the helper after it.
   $wpdBuild = Join-Path $PSScriptRoot "build-wpd-helper.ps1"

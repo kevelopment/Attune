@@ -13,7 +13,6 @@ import (
 
 	"attune/internal/library"
 	"attune/internal/model"
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ServeBookFile streams one managed format asset to the local reader UI. IDs
@@ -81,10 +80,7 @@ func (a *App) ServeBookFile(w http.ResponseWriter, r *http.Request) {
 
 // AttachBookFiles adds one or more format assets to an existing library book.
 func (a *App) AttachBookFiles(bookID string) (model.ImportResult, error) {
-	paths, err := wruntime.OpenMultipleFilesDialog(a.ctx, wruntime.OpenDialogOptions{
-		Title:   "Add book files",
-		Filters: []wruntime.FileFilter{{DisplayName: "Supported ebooks", Pattern: "*.epub;*.pdf;*.mobi;*.azw;*.azw3;*.prc;*.fb2;*.txt;*.cbz;*.cbr;*.rtf;*.doc;*.docx;*.odt;*.html;*.htmlz;*.pdb;*.lit;*.zip"}},
-	})
+	paths, err := a.openFiles("Add book files", "Supported ebooks", "*.epub;*.pdf;*.mobi;*.azw;*.azw3;*.prc;*.fb2;*.txt;*.cbz;*.cbr;*.rtf;*.doc;*.docx;*.odt;*.html;*.htmlz;*.pdb;*.lit;*.zip")
 	if err != nil || len(paths) == 0 {
 		return model.ImportResult{BookIDs: []string{bookID}, Errors: []string{}}, err
 	}

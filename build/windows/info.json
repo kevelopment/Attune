@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.0.21"
+	},
+	"info": {
+		"0409": {
+			"ProductVersion": "0.0.21",
+			"CompanyName": "kevelopment",
+			"FileDescription": "Attune your library.",
+			"LegalCopyright": "Copyright (c) 2026 kevelopment",
+			"ProductName": "Attune",
+			"Comments": "Attune your library."
+		}
+	}
+}

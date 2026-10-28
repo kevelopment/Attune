@@ -39,24 +39,6 @@ export type ImportResult = { imported: number; duplicates: number; skipped?: num
 export type ImportProgress = { current: number; total: number; filename: string; imported: number; duplicates: number; skipped?: number; failed: number; stage: 'importing' | 'done' | 'error'; message?: string }
 export type AppState = { books: Book[]; devices: Device[]; converterReady: boolean; converterVersion: string; libraryPath: string }
 
-declare global {
-  interface Window {
-    go?: { main?: { App?: Record<string, (...args: any[]) => Promise<any>> } }
-    runtime?: {
-      EventsOn?: (event: string, cb: (...args: any[]) => void) => (() => void) | void
-      Quit?: () => void
-      WindowFullscreen?: () => void
-      WindowUnfullscreen?: () => void
-      WindowIsFullscreen?: () => Promise<boolean>
-      WindowMinimise?: () => void
-      WindowToggleMaximise?: () => void
-      WindowIsMaximised?: () => Promise<boolean>
-      OnFileDrop?: (cb: (x: number, y: number, paths: string[]) => void, useDropTarget?: boolean) => void
-      OnFileDropOff?: () => void
-    }
-  }
-}
-
 export type UpdateState = {
   currentVersion: string
   latestVersion: string
