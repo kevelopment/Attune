@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { Application, Window } from '@wailsio/runtime'
 import {
   BookOpen, LibraryBig, Clock3, HardDrive, Settings2, Search, Plus, Grid2X2, List, ArrowDownUp, ArrowLeft, ArrowRight,
   MoreHorizontal, X, Pencil, Trash2, Send, RefreshCw, Power, Check, AlertCircle,
@@ -119,10 +120,9 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (!linuxDesktop || !window.runtime?.WindowIsMaximised) return
+    if (!linuxDesktop) return
     const syncMaximized = () => {
-      const status = window.runtime?.WindowIsMaximised?.()
-      if (status) void status.then(setWindowMaximized).catch(() => {})
+      void Window.IsMaximised().then(setWindowMaximized).catch(() => {})
     }
     syncMaximized()
     window.addEventListener('resize', syncMaximized)
@@ -215,14 +215,13 @@ export default function App() {
     }), bridge.on('import:progress', (p: ImportProgress) => {
       if (importActivityId.current) updateActivity(importActivityId.current, { status: p.stage === 'error' ? 'error' : 'running', current: p.current, total: p.total, detail: p.message || p.filename })
     }), bridge.on('library:changed', () => void refresh()), bridge.on('devices:changed', () => void refresh())]
-    const nativeDrop = window.runtime?.OnFileDrop
+    const nativeDrop = bridge.onFilesDropped((x, y, paths) => { setDragging(false); if (paths.length) importPathsRef.current(paths, targetAt(x, y)) })
     const targetAt = (x: number, y: number): 'device' | 'library' => document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-drop-target]')?.dataset.dropTarget === 'device' ? 'device' : 'library'
     const drop = (e: DragEvent) => { e.preventDefault(); setDragging(false); const files = Array.from(e.dataTransfer?.files ?? []); const paths = files.map((f: any) => f.path || (bridge.preview ? `/preview/${f.name}` : '')).filter(Boolean); if (paths.length) importPathsRef.current(paths, targetAt(e.clientX, e.clientY)) }
     const over = (e: DragEvent) => { e.preventDefault(); setDragging(true) }
     const leave = (e: DragEvent) => { if (!e.relatedTarget) setDragging(false) }
-    if (nativeDrop) nativeDrop((x, y, paths) => { setDragging(false); if (paths.length) importPathsRef.current(paths, targetAt(x, y)) }, true)
-    else { window.addEventListener('drop', drop); window.addEventListener('dragover', over); window.addEventListener('dragleave', leave) }
-    return () => { unsub.forEach(fn => typeof fn === 'function' && fn()); if (nativeDrop) window.runtime?.OnFileDropOff?.(); else { window.removeEventListener('drop', drop); window.removeEventListener('dragover', over); window.removeEventListener('dragleave', leave) } }
+    if (!nativeDrop) { window.addEventListener('drop', drop); window.addEventListener('dragover', over); window.addEventListener('dragleave', leave) }
+    return () => { unsub.forEach(fn => typeof fn === 'function' && fn()); if (nativeDrop) nativeDrop(); else { window.removeEventListener('drop', drop); window.removeEventListener('dragover', over); window.removeEventListener('dragleave', leave) } }
   }, [refresh])
   useEffect(() => { if (progress?.stage === 'done' && progress.total > 0 && progress.current >= progress.total) { const timer = window.setTimeout(() => setProgress(null), 5000); return () => clearTimeout(timer) } }, [progress?.stage, progress?.current, progress?.total])
   useEffect(() => {
@@ -681,9 +680,9 @@ export default function App() {
   const detailsOpen = detailsVisible && !!(focusedBook || focusedDeviceBook)
   const resizeHandle = <ResizeHandle width={detailWidth} onWidthChange={setDetailWidth}/>
   const linuxWindowControls = linuxDesktop && <div className="linux-window-controls" aria-label="Window controls">
-    <button className="linux-window-control" title="Minimize" aria-label="Minimize window" onClick={() => window.runtime?.WindowMinimise?.()}><Minus size={15}/></button>
-    <button className="linux-window-control" title={windowMaximized ? 'Restore' : 'Maximize'} aria-label={windowMaximized ? 'Restore window' : 'Maximize window'} onClick={() => window.runtime?.WindowToggleMaximise?.()}>{windowMaximized ? <Copy size={13}/> : <Square size={13}/>}</button>
-    <button className="linux-window-control linux-window-close" title="Close" aria-label="Close window" onClick={() => window.runtime?.Quit?.()}><X size={15}/></button>
+    <button className="linux-window-control" title="Minimize" aria-label="Minimize window" onClick={() => { void Window.Minimise() }}><Minus size={15}/></button>
+    <button className="linux-window-control" title={windowMaximized ? 'Restore' : 'Maximize'} aria-label={windowMaximized ? 'Restore window' : 'Maximize window'} onClick={() => { void Window.ToggleMaximise() }}>{windowMaximized ? <Copy size={13}/> : <Square size={13}/>}</button>
+    <button className="linux-window-control linux-window-close" title="Close" aria-label="Close window" onClick={() => { void Application.Quit() }}><X size={15}/></button>
   </div>
   if (!onboarding || onboarding.required || onboardingError) {
     const welcomeScreen = !onboarding && !onboardingError
@@ -691,7 +690,7 @@ export default function App() {
       : <Welcome libraries={onboarding?.libraries ?? []} error={onboardingError || undefined} onRetry={() => void loadOnboarding()} onScan={() => bridge.findCalibreLibraries(true)} onComplete={completeOnboarding} onImport={importCalibreAt} onBrowse={importCalibreLibrary} preview={bridge.preview}/>
     return <>{linuxDesktop && <div className="linux-onboarding-controls">{linuxWindowControls}</div>}{welcomeScreen}</>
   }
-  return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
+  return <div className={`app-shell ${bridge.preview ? 'preview-mode' : ''} ${detailsOpen ? 'details-open' : ''}`} data-file-drop-target="" style={detailsOpen ? { gridTemplateColumns: `64px minmax(320px, 1fr) ${detailWidth}px` } : undefined}>
     <aside className="sidebar" aria-label="Main navigation">
       <nav className="rail-nav" aria-label="Library sections">
         <button className={`rail-item ${page === 'library' ? 'active' : ''}`} aria-label="All books" aria-current={page === 'library' ? 'page' : undefined} onClick={() => navigateTo('library')}><LibraryBig/></button>
@@ -963,8 +962,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
   useEffect(() => {
     if (bridge.preview) return
     const syncFullscreen = () => {
-      const state = window.runtime?.WindowIsFullscreen?.()
-      if (state) void state.then(setFullscreen).catch(() => {})
+      void Window.IsFullscreen().then(setFullscreen).catch(() => {})
     }
     window.addEventListener('resize', syncFullscreen)
     return () => window.removeEventListener('resize', syncFullscreen)
@@ -975,7 +973,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
       event.preventDefault()
       event.stopImmediatePropagation()
       if (bridge.preview) void document.exitFullscreen?.()
-      else window.runtime?.WindowUnfullscreen?.()
+      else void Window.UnFullscreen()
       setFullscreen(false)
     }
     window.addEventListener('keydown', onEscape, true)
@@ -1258,7 +1256,7 @@ function ReaderView({ book, preview, loading, error, chapterIndex, setChapterInd
           </div>, fullscreen && panel.current ? panel.current : document.body)}
         </div> : <div className="reader-dropdown reader-fit-dropdown"><DropdownSelect label="Page fit" value={fit} onChange={value => setFit(value as ReaderSettings['fit'])} options={[{ value: 'page', label: 'Fit page' }, { value: 'width', label: 'Fit width' }]}/></div>}
         <div className="reader-dropdown reader-theme-dropdown"><DropdownSelect label="Reading theme" value={theme} onChange={setTheme} menuClassName={`reader-dropdown-menu reader-theme-${theme}`} options={[{ value: 'light', label: 'Light' }, { value: 'sepia', label: 'Sepia' }, { value: 'gray', label: 'Gray' }, { value: 'charcoal', label: 'Charcoal' }, { value: 'dark', label: 'Dark' }]}/></div>
-        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (bridge.preview) { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() } else if (fullscreen) { window.runtime?.WindowUnfullscreen?.(); setFullscreen(false) } else if (window.runtime?.WindowFullscreen) { window.runtime.WindowFullscreen(); setFullscreen(true) } }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
+        <button className="icon-button" title={fullscreen ? 'Exit full screen' : 'Full screen'} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={() => { if (bridge.preview) { if (document.fullscreenElement) void document.exitFullscreen(); else void panel.current?.requestFullscreen?.() } else if (fullscreen) { void Window.UnFullscreen(); setFullscreen(false) } else { void Window.Fullscreen(); setFullscreen(true) } }}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
       </div>
     </div>
     <div className={`reader-layout ${tocOpen ? '' : 'toc-hidden'}`}>

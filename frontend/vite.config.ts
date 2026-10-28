@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import wails from '@wailsio/runtime/plugins/vite'
 import { resolve } from 'node:path'
 
-const port = Number(process.env.ATTUNE_DEV_PORT ?? 5173)
+const port = Number(process.env.WAILS_VITE_PORT ?? process.env.ATTUNE_DEV_PORT ?? 5173)
 const foliatePDFStub = {
   name: 'attune-foliate-pdf-stub',
   enforce: 'pre' as const,
@@ -14,7 +15,7 @@ const foliatePDFStub = {
 }
 
 export default defineConfig({
-  plugins: [foliatePDFStub, react()],
+  plugins: [foliatePDFStub, react(), wails('./bindings')],
   // Foliate's PDF module uses top-level await; Attune loads its own PDF.js
   // adapter and should serve Foliate's native ESM without dependency bundling.
   optimizeDeps: { exclude: ['foliate-js'] },

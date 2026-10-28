@@ -63,12 +63,10 @@ async function start() {
   const port = Number(process.env.ATTUNE_DEV_PORT)
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('ATTUNE_DEV_PORT must be between 1024 and 65535')
   await freePort(port)
-  await freePort(34115)
   const log = fs.openSync(logFile, 'w', 0o600)
-  const wailsArgs = ['dev', '-s', '-wailsjsdir', path.join(state, 'bindings'), '-devserver', '127.0.0.1:34115', '-frontenddevserverurl', `http://127.0.0.1:${port}`]
-  if (process.platform === 'linux') wailsArgs.push('-tags', 'webkit2_41')
+  const wailsArgs = ['dev', '-config', './build/config.yml', '-port', String(port)]
   const child = spawn(binary, wailsArgs, {
-    cwd: root, detached: true, stdio: ['ignore', log, log], env: process.env,
+    cwd: root, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXTRA_TAGS: process.platform === 'linux' ? 'gtk3' : process.env.EXTRA_TAGS },
   })
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
   child.unref()
@@ -77,8 +75,8 @@ async function start() {
   console.log(`Starting Attune; first compilation may take a moment. Logs: ${logFile}`)
   for (let i = 0; i < 240; i++) {
     if (!currentPID()) throw new Error(`Wails exited during startup; see ${logFile}`)
-    if (await ready('http://127.0.0.1:34115/') && await ready(`http://127.0.0.1:${port}/`)) {
-      console.log(`Attune ready. React/CSS hot reload: ${port}; Wails: 34115`)
+    if (await ready(`http://127.0.0.1:${port}/`)) {
+      console.log(`Attune development frontend ready. React/CSS hot reload: ${port}`)
       console.log(`Development library: ${process.env.EBOOK_LIBRARY_HOME}`)
       return
     }

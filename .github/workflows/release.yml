@@ -167,7 +167,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            scripts/build-release.sh "$VERSION" webkit2_41
+            scripts/build-release.sh "$VERSION" gtk3
           else
             scripts/build-release.sh "$VERSION"
           fi

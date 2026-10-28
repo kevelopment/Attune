@@ -15,15 +15,21 @@ if [ ! -x "third_party/kindling/darwin-$ARCH/kindling-cli" ]; then
   echo "Fetch the pinned Kindling helper first; see README.md." >&2
   exit 1
 fi
-if [ ! -x "$GOBIN/wails" ]; then
-  go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+if [ ! -x "$GOBIN/wails3" ]; then
+  if [ "$(go env GOOS)" = linux ]; then
+    go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+  else
+    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+  fi
 fi
 MTP_ARCH=$ARCH
 [ "$MTP_ARCH" != amd64 ] || MTP_ARCH=x86_64
 MTP_PREFIX=${ATTUNE_MTP_PREFIX:-$APP_ROOT/.cache/macos-mtp/$MTP_ARCH}
 scripts/build-macos-mtp.sh "$MTP_ARCH"
 export PKG_CONFIG_PATH="$MTP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-wails build -clean -tags libmtp -ldflags "-X attune/internal/app.appVersion=$ATTUNE_VERSION -X attune/internal/app.updateEnabled=true"
+export EXTRA_TAGS=libmtp
+export EXTRA_LDFLAGS="-X attune/internal/app.appVersion=$ATTUNE_VERSION -X attune/internal/app.updateEnabled=true"
+wails3 package
 APP="build/bin/Attune.app"
 mkdir -p "$APP/Contents/Resources/licenses"
 cp "third_party/kindling/darwin-$ARCH/kindling-cli" "$APP/Contents/Resources/kindling-cli"

@@ -1,13 +1,12 @@
 #!/bin/sh
 set -eu
 . "$(dirname -- "$0")/env.sh"
-VERSION=${1:?usage: scripts/build-release.sh VERSION [webkit-tag]}
+VERSION=${1:?usage: scripts/build-release.sh VERSION [build-tag]}
 TAG=${2:-}
 node -e 'if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)(\.(0|[1-9][0-9]*))?)?$/.test(process.argv[1])) process.exit(2)' "$VERSION" || {
   echo "version must be MAJOR.MINOR.PATCH with an optional alpha, beta, or rc suffix" >&2
   exit 2
 }
-PRODUCT_VERSION=${VERSION%%-*}
 goos=$(go env GOOS)
 goarch=$(go env GOARCH)
 helper=third_party/kindling/$goos-$goarch/kindling-cli
@@ -16,8 +15,12 @@ if [ ! -x "$helper" ]; then
   echo "missing pinned helper: $helper (run scripts/fetch-kindling.sh)" >&2
   exit 1
 fi
-if [ ! -x "$GOBIN/wails" ]; then
-  go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+if [ ! -x "$GOBIN/wails3" ]; then
+  if [ "$goos" = linux ]; then
+    go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+  else
+    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+  fi
 fi
 BUILD_TAGS=$TAG
 if [ "$goos" = darwin ]; then
@@ -35,14 +38,19 @@ elif [ "$goos" = linux ]; then
   BUILD_TAGS=${BUILD_TAGS:+$BUILD_TAGS,}libmtp
 fi
 backup=$(mktemp)
-cp wails.json "$backup"
-restore_config() { cp "$backup" wails.json; rm -f "$backup"; }
+cp build/config.yml "$backup"
+restore_config() { cp "$backup" build/config.yml; rm -f "$backup"; }
 trap restore_config EXIT HUP INT TERM
-node -e 'const fs=require("fs"); const p="wails.json"; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.info.productVersion=process.argv[1]; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n")' "$PRODUCT_VERSION"
-if [ -n "$BUILD_TAGS" ]; then
-  wails build -clean -platform "$goos/$goarch" -tags "$BUILD_TAGS" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
+PRODUCT_VERSION=${VERSION%%-*}
+node -e 'const fs=require("fs"); const p="build/config.yml"; const s=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,s.replace(/^  version: .*$/m, `  version: "${process.argv[1]}"`))' "$PRODUCT_VERSION"
+export EXTRA_LDFLAGS="-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
+if [ "$goos" = darwin ]; then
+  export EXTRA_TAGS="$BUILD_TAGS"
+  wails3 package
+elif [ -n "$BUILD_TAGS" ]; then
+  wails3 build -tags "$BUILD_TAGS"
 else
-  wails build -clean -platform "$goos/$goarch" -ldflags "-X attune/internal/app.appVersion=$VERSION -X attune/internal/app.updateEnabled=true"
+  wails3 build
 fi
 stage="build/release/Attune-$goos-$goarch"
 mkdir -p "$stage/licenses" dist

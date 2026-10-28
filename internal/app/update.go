@@ -13,10 +13,9 @@ import (
 	"time"
 
 	"attune/internal/updater"
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-var appVersion = "0.0.20"
+var appVersion = "0.0.21"
 var updateEnabled = "false"
 
 type UpdateState struct {
@@ -272,7 +271,9 @@ func (a *App) RestartNow() error {
 	state := a.updateState
 	a.updateMu.Unlock()
 	a.event("update:state", state)
-	wruntime.Quit(a.ctx)
+	if a.desktop.Quit != nil {
+		a.desktop.Quit()
+	}
 	return nil
 }
 

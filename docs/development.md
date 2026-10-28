@@ -2,9 +2,9 @@
 
 ## Platform prerequisites
 
-Install mise and the native prerequisites from the [Wails v2 installation guide](https://wails.io/docs/gettingstarted/installation). Mise selects Go 1.26.9 and Node.js 22.22.1. Run `mise trust` once if mise asks to trust `mise.toml`.
+Install mise and the native prerequisites from the [Wails v3 installation guide](https://v3.wails.io/getting-started/installation/). Mise selects Go 1.26.9 and Node.js 22.22.1. Run `mise trust` once if mise asks to trust `mise.toml`.
 
-On macOS, use macOS 13+, Xcode command-line tools, and `pkgconf` for the native MTP adapter. On Linux, install GTK 3, WebKit2GTK 4.1, libmtp, pkg-config, and a C compiler. Fetching the Linux ARM64 Kindling helper also requires Rust/Cargo 1.85 or newer because upstream does not publish an ARM64 binary. On Windows, install the MinGW-w64 UCRT64 GCC toolchain, PowerShell 7, and Visual Studio's Desktop development with C++ workload plus Windows SDK for the WPD helper. Linux USB storage also requires `lsblk`; eject needs `udisksctl` and working UDisks/polkit permissions. Windows USB storage uses PowerShell Storage CIM cmdlets and requires an external volume with a drive letter. Physical-device behavior still needs hardware testing; see the [capability matrix](capability-matrix.md).
+On macOS, use macOS 13+, Xcode command-line tools, and `pkgconf` for the native MTP adapter. On Linux, install GTK 3, WebKit2GTK 4.1, libmtp, pkg-config, and a C compiler; the v3 build uses Wails' `gtk3` compatibility tag for these platform libraries. Fetching the Linux ARM64 Kindling helper also requires Rust/Cargo 1.85 or newer because upstream does not publish an ARM64 binary. On Windows, install the MinGW-w64 UCRT64 GCC toolchain, PowerShell 7, and Visual Studio's Desktop development with C++ workload plus Windows SDK for the WPD helper. Linux USB storage also requires `lsblk`; eject needs `udisksctl` and working UDisks/polkit permissions. Windows USB storage uses PowerShell Storage CIM cmdlets and requires an external volume with a drive letter. Physical-device behavior still needs hardware testing; see the [capability matrix](capability-matrix.md).
 
 ## Common tasks
 
@@ -28,7 +28,7 @@ mise run up
 mise run down
 ```
 
-`up` starts Vite and the native Wails app on the host. React and CSS changes hot-reload through Vite on port 5183; Go changes rebuild and restart the app. The Wails development server listens on port 34115. The app stores its persistent, isolated SQLite library in `.cache/dev-library`, separate from your normal Attune library. The pinned Kindling helper is fetched and checksum-verified on first start. Logs are in `.cache/dev/wails.log` (`tail -f .cache/dev/wails.log`). `down` preserves the development library and dependencies. Choose another frontend port with `ATTUNE_DEV_PORT=5184 mise run up`, or a library location with `ATTUNE_DEV_LIBRARY_HOME=/path/to/dev-library mise run up`. `./scripts/dev.sh` is an alias for `mise run up`.
+`up` starts Vite and the native Wails app on the host. React and CSS changes hot-reload through Vite on port 5183; Go changes rebuild and restart the app. The app stores its persistent, isolated SQLite library in `.cache/dev-library`, separate from your normal Attune library. The pinned Kindling helper is fetched and checksum-verified on first start. Logs are in `.cache/dev/wails.log` (`tail -f .cache/dev/wails.log`). `down` preserves the development library and dependencies. Choose another frontend port with `ATTUNE_DEV_PORT=5184 mise run up`, or a library location with `ATTUNE_DEV_LIBRARY_HOME=/path/to/dev-library mise run up`. `./scripts/dev.sh` is an alias for `mise run up`.
 
 Go tests use temporary data and simulated devices. Passing CI checks does not replace physical-device testing. The native `mise run up` and `mise run down` tasks use a separate development library and preserve it between runs.
 

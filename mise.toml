@@ -21,15 +21,15 @@ run = ["npm --prefix frontend ci", "npm --prefix frontend run build"]
 
 [tasks.test]
 description = "Run Go tests with the race detector"
-run = [{ task = "_frontend-build" }, "go test -race -tags=webkit2_41 ./..."]
+run = [{ task = "_frontend-build" }, "go test -race -tags=gtk3 ./..."]
 env = { CGO_ENABLED = "1" }
 
 [tasks.lint]
 description = "Check Go formatting, Go vet, and TypeScript"
-run = [
+  run = [
   { task = "_frontend-build" },
   "node scripts/check-gofmt.mjs",
-  "go vet -tags=webkit2_41 ./...",
+  "go vet -tags=gtk3 ./...",
   "npm --prefix frontend exec -- tsc --noEmit --project frontend/tsconfig.json",
 ]
 env = { CGO_ENABLED = "1" }
@@ -38,6 +38,6 @@ env = { CGO_ENABLED = "1" }
 description = "Build the desktop app for the current platform"
 run = [
   "scripts/fetch-kindling.sh",
-  '''version=$(node -p "require('./frontend/package.json').version"); if [ "$(go env GOOS)" = darwin ]; then ATTUNE_VERSION="$version" scripts/build.sh; else scripts/build-release.sh "$version" webkit2_41; fi''',
+  '''version=$(node -p "require('./frontend/package.json').version"); if [ "$(go env GOOS)" = darwin ]; then ATTUNE_VERSION="$version" scripts/build.sh; else scripts/build-release.sh "$version" gtk3; fi''',
 ]
-run_windows = '''pwsh -NoProfile -Command "& { & './scripts/fetch-kindling.ps1'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $version = (Get-Content 'frontend/package.json' -Raw | ConvertFrom-Json).version; & './scripts/build-release.ps1' -Version $version }"'''
+  run_windows = '''pwsh -NoProfile -Command "& { & './scripts/fetch-kindling.ps1'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $version = (Get-Content 'frontend/package.json' -Raw | ConvertFrom-Json).version; & './scripts/build-release.ps1' -Version $version }"'''

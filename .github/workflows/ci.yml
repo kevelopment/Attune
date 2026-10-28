@@ -142,7 +142,7 @@ jobs:
         run: |
           version=$(node -p 'require("./frontend/package.json").version')
           if [ "$RUNNER_OS" = Linux ]; then
-            scripts/build-release.sh "$version" webkit2_41
+            scripts/build-release.sh "$version" gtk3
           else
             scripts/build-release.sh "$version"
           fi
